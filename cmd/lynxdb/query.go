@@ -86,16 +86,16 @@ main, and a local query that names no source reads main.`,
 					}()
 				}
 			}
-			if projectRC != nil {
-				if projectRC.DefaultSince != "" && !cmd.Flags().Changed("since") {
-					since = projectRC.DefaultSince
-				}
-				if projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
-					source = projectRC.DefaultSource
-				}
+			if projectRC != nil && projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
+				source = projectRC.DefaultSource
 			}
 
 			if file == "" {
+				// A project's default time range is one of its server's
+				// data, not of local files.
+				if projectRC != nil && projectRC.DefaultSince != "" && !cmd.Flags().Changed("since") {
+					since = projectRC.DefaultSince
+				}
 				if explain {
 					return runLocalExplain(query, serverQueryOptions)
 				}
@@ -115,14 +115,23 @@ main, and a local query that names no source reads main.`,
 			if explain {
 				return runLocalExplain(query, localQueryOptions)
 			}
+			earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
+			if err != nil {
+				return err
+			}
 			lq := localQuery{
 				query:      query,
+				earliest:   earliest,
+				latest:     latest,
 				source:     source,
 				sourcetype: sourcetype,
 				outputFile: outputFile,
 				failEmpty:  failEmpty,
 				analyze:    analyze,
 				raw:        rawMode,
+			}
+			if _, err := lq.options(); err != nil {
+				return err
 			}
 			if file == "-" {
 				return runQueryStdin(lq)
@@ -159,6 +168,8 @@ var localQueryOptions = query.Options{DefaultSource: database.DefaultSource}
 // localQuery is a query over local files or standard input.
 type localQuery struct {
 	query string
+	// earliest and latest bound the time of the events the query reads.
+	earliest, latest string
 	// source and sourcetype are the metadata of the loaded events.
 	source     string
 	sourcetype string
@@ -177,7 +188,7 @@ func runQueryFile(lq localQuery, file string) error {
 	if len(matches) == 0 {
 		return noFilesMatchingError{pattern: file}
 	}
-	if err := checkLocalQuery(lq.query); err != nil {
+	if done, err := checkLocalQuery(lq.query); done || err != nil {
 		return err
 	}
 
@@ -234,7 +245,7 @@ func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) 
 }
 
 func runQueryStdin(lq localQuery) error {
-	if err := checkLocalQuery(lq.query); err != nil {
+	if done, err := checkLocalQuery(lq.query); done || err != nil {
 		return err
 	}
 
@@ -265,12 +276,31 @@ func runQueryStdin(lq localQuery) error {
 }
 
 // checkLocalQuery compiles a local query before any input is read, so a bad
-// query fails fast with its position and hint.
-func checkLocalQuery(q string) error {
-	if _, err := query.CompileWith(q, localQueryOptions); err != nil {
-		return compileError(q, err)
+// query fails fast with its position and hint. A query that asks for its
+// plan with explain gets it here, and done reports that nothing is left to
+// run.
+func checkLocalQuery(q string) (done bool, err error) {
+	c, err := query.CompileWith(q, localQueryOptions)
+	if err != nil {
+		return true, compileError(q, err)
 	}
-	return nil
+	if c.Explain {
+		fmt.Print(query.Explain(c))
+		return true, nil
+	}
+	return false, nil
+}
+
+// options returns the options that bound lq to its time range. Relative
+// bounds count from now, which is after the input loaded: a line without a
+// timestamp has its load time.
+func (lq localQuery) options() (database.QueryOptions, error) {
+	now := time.Now()
+	tr, err := timerange.ParseOptionalRange(lq.earliest, lq.latest, now)
+	if err != nil || tr == nil {
+		return database.QueryOptions{Now: now}, err
+	}
+	return database.QueryOptions{From: tr.Earliest, To: tr.Latest, Now: now}, nil
 }
 
 // runLocalQuery runs a query over the events loaded into a local database
@@ -290,7 +320,11 @@ func runLocalQuery(db *database.DB, lq localQuery, start time.Time) error {
 	}
 	st.ParseDuration = time.Since(compileStart)
 	execStart := time.Now()
-	res, err := db.Query(context.Background(), c, database.QueryOptions{})
+	opts, err := lq.options()
+	if err != nil {
+		return err
+	}
+	res, err := db.Query(context.Background(), c, opts)
 	if err != nil {
 		return compileError(lq.query, err)
 	}

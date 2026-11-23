@@ -56,6 +56,12 @@ A text line's `source` field is the path of the file it came from;
 `--source` overrides it and `--sourcetype` sets `sourcetype`. JSON lines keep
 their own fields only.
 
+`--since`, `--from` and `--to` select events by their time, as on a server:
+
+```bash
+lynxdb query --file access.log --from 2025-01-15T08:00:00Z --to 2025-01-15T09:00:00Z 'level=ERROR | stats count() by host'
+```
+
 ## Pipe from standard input
 
 `--file -` reads standard input. `lynxdb '<query>'`, with a query and no

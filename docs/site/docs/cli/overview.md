@@ -102,7 +102,7 @@ default_source: web
 | `server` | `--server` |
 | `profile` | `--profile` |
 | `default_format` | `--format` |
-| `default_since` | `lynxdb query --since` |
+| `default_since` | `lynxdb query --since` on server queries |
 | `default_source` | `--source` on `query`, `ingest` and `import` |
 
 `.lynxdbrc` holds client defaults only. Server settings live in the config file; see [config](./config-cmd.md).

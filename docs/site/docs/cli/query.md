@@ -27,9 +27,9 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 
 | Flag | Short | Default | Modes | Description |
 |------|-------|---------|-------|-------------|
-| `--since` | `-s` | | server | Relative time range: `30s`, `15m`, `1h`, `7d`, `2w` |
-| `--from` | | | server | Absolute start time (ISO 8601); needs `--to` |
-| `--to` | | | server | Absolute end time (ISO 8601); needs `--from` |
+| `--since` | `-s` | | all | Relative time range: `30s`, `15m`, `1h`, `7d`, `2w` |
+| `--from` | | | all | Absolute start time (ISO 8601); needs `--to` |
+| `--to` | | | all | Absolute end time (ISO 8601); needs `--from` |
 | `--timeout` | | `6m` | server | Client-side limit for the whole query, as a Go duration: `30s`, `10m` |
 | `--copy` | | `false` | server | Copy the result rows to the clipboard as TSV |
 | `--file` | `-f` | | local | Load a file or glob pattern, or standard input for `-`, and query it in process |
@@ -41,7 +41,7 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 | `--fail-on-empty` | | `false` | all | Exit with code 6 when the query returns no rows |
 | `--explain` | | `false` | all | Print the compiled plans and exit without running the query |
 
-Flags marked "server" have no effect on a local query, and `--copy` fails with an error there. With `--since`, `--from` and `--to` absent, a server query covers all time unless the query sets its own range with `earliest=` and `latest=`.
+`--timeout` has no effect on a local query, and `--copy` fails with an error there. `--since`, `--from` and `--to` select events by their time, in `[from, to)`; on a local query, `--since` counts back from the moment the input finished loading, so lines without a timestamp, which take their load time, fall inside it. With all three absent, a query covers all time unless it sets its own range with `earliest=` and `latest=`.
 
 A `\G` at the end of the query switches `--format auto` to vertical output, one field per line:
 
@@ -109,7 +109,7 @@ lynxdb query --file access.log --format csv 'stats count() by level' > levels.cs
 
 ## Plans: `--explain`
 
-`--explain` compiles the query in the CLI and prints the logical plan, the optimized plan and the optimizer rules that fired. It reads no input and contacts no server.
+`--explain` compiles the query in the CLI and prints the logical plan, the optimized plan and the optimizer rules that fired. It reads no input and contacts no server. A local query that starts with `explain`, such as `explain level=ERROR | stats count()`, prints the same plans and reads no input either.
 
 ```bash
 lynxdb query --explain 'source=main level=ERROR | stats count() as n by host | sort - n | head 3'

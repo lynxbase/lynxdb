@@ -61,7 +61,7 @@ API key: `--token`, then `LYNXDB_TOKEN`, then the credentials file written by `l
 server: https://logs.example.com
 profile: prod
 default_format: table
-default_since: 6h         # lynxdb query --since
+default_since: 6h         # lynxdb query --since, server queries
 default_source: web       # --source on query, ingest, import
 ```
 
@@ -87,13 +87,13 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 
 - **Server** (default): `POST /api/v1/query` to `--server`, whatever stdin is. A query the server promotes to an asynchronous job (HTTP 202) is polled until it finishes or `--timeout` expires (default 6 minutes). When the server is unreachable and stdin is not a terminal, the connection error suggests `--file -`.
 - **Local** (`--file <path|glob>`, `--file -` for stdin): the query is compiled first, then the input is loaded into the index `main` of a database the CLI opens in a temporary directory, the query runs in process, and the directory is removed. Each line is one event. A JSON object line is stored as it is; any other line keeps its text in `_raw`, its timestamp as the event time and its `key=value` pairs as fields. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. The fields `source` and `sourcetype` of a text line are the file path, `stdin` or `--source`, and `--sourcetype`. A local query that names no source reads `main`: `| where x > 1` and `where x > 1` run as `source=main | where x > 1`, and leading search terms, as in `error | stats count()`, run as `search source=main error | stats count()`. In every mode a leading `|` must be followed by a command.
-- **Plan only** (`--explain`): compiles in the CLI and prints the logical plan, optimized plan and optimizer rules. Reads no input, needs no server.
+- **Plan only** (`--explain`, or a local query that starts with `explain`): compiles in the CLI and prints the logical plan, optimized plan and optimizer rules. Reads no input, needs no server.
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--since` | `-s` | | Relative time range (`15m`, `1h`, `7d`); server mode |
-| `--from` | | | Absolute start time (ISO 8601); needs `--to`; server mode |
-| `--to` | | | Absolute end time (ISO 8601); needs `--from`; server mode |
+| `--since` | `-s` | | Relative time range (`15m`, `1h`, `7d`) |
+| `--from` | | | Absolute start time (ISO 8601); needs `--to` |
+| `--to` | | | Absolute end time (ISO 8601); needs `--from` |
 | `--file` | `-f` | | Query a local file or glob instead of the server; `-` reads stdin |
 | `--sourcetype` | | | `sourcetype` of loaded text lines; local mode |
 | `--source` | | | `source` of loaded text lines; local mode |

@@ -393,3 +393,57 @@ func TestPipe_LeadingPipeNeedsCommand(t *testing.T) {
 		t.Errorf("expected an unknown command error, got:\n%s", r.Stderr)
 	}
 }
+
+// minuteLines returns n text lines, one per minute from 08:00, with n=<i>.
+func minuteLines(n int) string {
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&sb, "2025-01-15T08:%02d:00.000Z level=info n=%d\n", i, i)
+	}
+
+	return sb.String()
+}
+
+// TestPipe_TimeRange pins that --from and --to bound a local query to
+// [from, to).
+func TestPipe_TimeRange(t *testing.T) {
+	r := runLynxDBWithStdin(t, minuteLines(10), "query", "--file", "-", "--format", "json",
+		"--from", "2025-01-15T08:02:00Z", "--to", "2025-01-15T08:05:00Z",
+		"stats count() as count, min(n) as lo, max(n) as hi")
+	if r.ExitCode != 0 {
+		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
+	}
+
+	rows := mustParseJSON(t, r.Stdout)
+	if len(rows) != 1 || rows[0]["count"] != 3.0 || rows[0]["lo"] != 2.0 || rows[0]["hi"] != 4.0 {
+		t.Errorf("expected count=3 lo=2 hi=4, got %v", rows)
+	}
+}
+
+// TestPipe_SinceCountsFromAfterLoad pins that --since counts from after the
+// input loaded, so lines without a timestamp, which take their load time,
+// fall inside it.
+func TestPipe_SinceCountsFromAfterLoad(t *testing.T) {
+	r := runLynxDBWithStdin(t, "first\nsecond\n", "query", "--file", "-", "--format", "json",
+		"--since", "1m", "stats count() as count")
+	if r.ExitCode != 0 {
+		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
+	}
+
+	if got := jsonCount(t, r.Stdout); got != 2 {
+		t.Errorf("expected count=2, got %d", got)
+	}
+}
+
+// TestPipe_ExplainPrefixPrintsPlan pins that a local query starting with
+// explain prints its plan instead of rows.
+func TestPipe_ExplainPrefixPrintsPlan(t *testing.T) {
+	r := runLynxDBWithStdin(t, generateJSONLines(3), "query", "--file", "-", "explain level=error | stats count()")
+	if r.ExitCode != 0 {
+		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
+	}
+
+	if !strings.Contains(r.Stdout, "Logical plan:") || !strings.Contains(r.Stdout, "Scan(main)") {
+		t.Errorf("expected the plan, got:\n%s", r.Stdout)
+	}
+}
