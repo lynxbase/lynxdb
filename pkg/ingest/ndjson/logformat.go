@@ -1,7 +1,6 @@
 package ndjson
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -13,21 +12,8 @@ type FormatParser interface {
 	// Parse calls emit for each field of input; emit returning false stops it.
 	Parse(input string, emit func(key string, val event.Value) bool) error
 
-	// Name returns the parser format name: "syslog" or "combined".
+	// Name returns the name of the format, such as "combined".
 	Name() string
-}
-
-// NewParser creates a FormatParser for the given format name: syslog or
-// combined.
-func NewParser(format string) (FormatParser, error) {
-	switch strings.ToLower(format) {
-	case "syslog":
-		return &SyslogParser{}, nil
-	case "combined":
-		return &CombinedParser{}, nil
-	default:
-		return nil, fmt.Errorf("ndjson: unknown format %q (supported: syslog, combined)", format)
-	}
 }
 
 // InferValue auto-detects the type of a string value and returns a typed event.Value.

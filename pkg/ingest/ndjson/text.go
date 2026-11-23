@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/ingest/syslog"
 )
 
 // Text turns lines of log text into NDJSON. A line that is a JSON object
@@ -20,20 +22,40 @@ type Text struct {
 	Source, SourceType, Host string
 }
 
-// NewText returns a converter that extracts the fields of format, a log
-// format that NewParser parses, besides the timestamp and key=value pairs;
-// an empty format extracts only those.
+// NewText returns a converter that extracts the fields of format, syslog or
+// combined, besides the timestamp and key=value pairs; an empty format
+// extracts only those. The fields of the format come first, so a key=value
+// pair of the same name does not replace them.
 func NewText(format string) (*Text, error) {
-	pipe := pipeline.DefaultPipeline()
-	if format != "" {
-		p, err := NewParser(format)
-		if err != nil {
-			return nil, err
-		}
-		pipe = pipeline.New(pipe, formatFields{p})
+	var stages []pipeline.Stage
+	switch strings.ToLower(format) {
+	case "":
+	case "syslog":
+		stages = append(stages, syslogMessages{})
+	case "combined":
+		stages = append(stages, formatFields{&CombinedParser{}})
+	default:
+		return nil, fmt.Errorf("ndjson: unknown format %q (supported: syslog, combined)", format)
 	}
 
-	return &Text{pipe: pipe}, nil
+	return &Text{pipe: pipeline.New(append(stages, pipeline.DefaultPipeline())...)}, nil
+}
+
+// syslogMessages reads the text of each event as a syslog message, as the
+// syslog receiver does, taking the time of an RFC 3164 message in UTC and
+// the current year. A line that is not one is left to the rest of the
+// pipeline.
+type syslogMessages struct{}
+
+func (syslogMessages) Process(events []*event.Event) ([]*event.Event, error) {
+	year := time.Now().UTC().Year()
+	for _, ev := range events {
+		if dialect := syslog.Detect(ev.Raw); dialect != syslog.Raw {
+			_ = syslog.Parse(ev, ev.Raw, dialect, time.UTC, year)
+		}
+	}
+
+	return events, nil
 }
 
 // formatFields sets the fields a format parser finds in the text of each

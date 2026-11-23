@@ -80,7 +80,7 @@ extracts that format's fields:
 | Format | Fields |
 |--------|--------|
 | Combined access log | `client_ip`, `ident`, `user`, `timestamp`, `request`, `method`, `uri`, `protocol`, `status`, `bytes`, `referer`, `user_agent` |
-| Syslog (RFC 3164 and RFC 5424 with `<PRI>`) | `priority`, `facility`, `severity`, `facility_name`, `severity_name`, `timestamp`, `hostname`, `appname`, `procid`, `message`, and more |
+| Syslog (RFC 3164 and RFC 5424 with `<PRI>`) | `_time` and `host` from the header, `facility`, `severity`, `facility_label`, `severity_label`, `level`, `app_name`, `procid`, `msgid`, `message`, and `sd_<SD-ID>_<param>` for structured data, as the [syslog receiver](../configuration/syslog.md#extracted-fields) extracts them; an RFC 3164 time is read in UTC and the current year |
 
 A JSON line keeps its fields whatever the detected format; a Docker
 `json-file` line, for example, yields `log`, `stream` and `time`, and members
