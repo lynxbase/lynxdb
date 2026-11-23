@@ -110,7 +110,6 @@ func (a *aggregator) keyRow(g int) map[string]event.Value {
 type AggregateIterator struct {
 	child   Iterator
 	agg     *aggregator
-	err     error
 	emitted bool
 }
 
