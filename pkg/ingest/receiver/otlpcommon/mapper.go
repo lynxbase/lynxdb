@@ -33,12 +33,11 @@ func LogsToEvents(resourceLogs []*logspb.ResourceLogs) []*event.Event {
 				if raw == "" {
 					continue
 				}
-				ts := time.Unix(0, int64(rec.GetTimeUnixNano()))
-				if rec.GetTimeUnixNano() == 0 {
-					ts = time.Unix(0, int64(rec.GetObservedTimeUnixNano()))
-				}
-				if ts.IsZero() {
-					ts = now
+				ts := now
+				if t := rec.GetTimeUnixNano(); t != 0 {
+					ts = time.Unix(0, int64(t))
+				} else if t := rec.GetObservedTimeUnixNano(); t != 0 {
+					ts = time.Unix(0, int64(t))
 				}
 
 				ev := event.NewEvent(ts, raw)

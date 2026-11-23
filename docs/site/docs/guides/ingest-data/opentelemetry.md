@@ -56,7 +56,8 @@ service:
 ## How records are stored
 
 OTLP log records are written to the `main` index with `sourcetype` `otlp`.
-The record body becomes `_raw` and the record time becomes `_time`. The
+The record body becomes `_raw`. `_time` is the record's time, or its
+observed time when it has none, or the time it arrived when it has neither. The
 `service.name` resource attribute becomes `source` (falling back to
 `host.name`, then `otlp`), and `host.name` also fills `host`. Other fields:
 
