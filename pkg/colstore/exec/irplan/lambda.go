@@ -58,9 +58,6 @@ func (t *translator) lambdaCall(c *ir.Call) (*exec.Expr, error) {
 	for _, b := range bodies {
 		walk(b)
 	}
-	if len(args) == 0 {
-		args = append(args, exec.Bool(true))
-	}
 	name := c.Func.Name
 	if len(bodies) == 0 || (name != "reduce" && own != 1) || (name == "reduce" && own != 2) {
 		return nil, fmt.Errorf("irplan: %s takes an array and a lambda", c)
