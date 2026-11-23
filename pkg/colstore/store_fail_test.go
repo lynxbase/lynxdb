@@ -319,9 +319,14 @@ func TestAppendTakesNoLinesWhileAFullBufferCannotBeWritten(t *testing.T) {
 		}
 	}
 	failing.Store(false)
-	if err := s.Sync(); err != nil {
-		t.Fatal(err)
-	}
+	// A flush that began while syncs failed may end in that failure after
+	// they work again, and a Sync that waited for it reports it; the next
+	// Sync writes the rows it left.
+	within(t, "a sync to write the rows of the failed flushes", func() {
+		for s.Sync() != nil {
+			time.Sleep(time.Millisecond)
+		}
+	})
 	counts := countN(t, s.Table())
 	for n, count := range counts {
 		if n >= 1000 || count != 1 {
