@@ -1,6 +1,7 @@
 package part
 
 import (
+	"encoding/binary"
 	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -75,20 +76,44 @@ func (d *Dictionary) fill(dst *vec.Column, codes []uint32, sparse bool, rows int
 	data := dst.Data[:0]
 	dst.Offsets = grow(dst.Offsets, rows+1)
 	offsets := dst.Offsets
+	if d.liveLen == 0 && len(codes) <= rows {
+		// The strings lie all over the dictionary, each a miss of the
+		// processor's cache. Reading a word at either end of every slot
+		// first, into memory that the offsets take below, lets the misses
+		// of many strings be served at once and not one after another.
+		slot, last := uint64(d.reader.slot), uint64(d.reader.slot+7)/8
+		for i, code := range codes {
+			at := uint64(code) * slot >> 3
+			offsets[i] = binary.LittleEndian.Uint32(d.data[at:]) ^ binary.LittleEndian.Uint32(d.data[at+last:])
+		}
+	}
 	// The string of the code before lies from from to to.
 	prev, from, to := ^uint32(0), 0, 0
 	next := 0
-	for r := 0; r < rows; r++ {
-		offsets[r] = uint32(len(data))
-		if sparse && !dst.Valid.Get(r) {
+	// Every code has a string of the one length, packed: each is unpacked
+	// where it lies once its pages are checked.
+	plain := d.liveLen == 0 && d.reader.lead == 0
+	r, stride := &d.reader, d.reader.stride
+	slot, span := uint64(r.slot), uint64(r.slot+7)/8+8
+	for row := 0; row < rows; row++ {
+		offsets[row] = uint32(len(data))
+		if sparse && !dst.Valid.Get(row) {
 			continue
 		}
 		code := codes[next]
 		next++
 		start := len(data)
-		if code == prev {
+		switch {
+		case code == prev:
 			data = append(data, data[from:to]...)
-		} else {
+		case plain:
+			at := uint64(code) * slot >> 3
+			if int(code) >= d.stored || !d.checked(at, min(span, d.slotsLen-at)) {
+				return ErrCorrupt
+			}
+			data = data[:start+stride]
+			r.put(data[start:], int(code), int(code)+1)
+		default:
 			var err error
 			if data, err = d.Value(data, code); err != nil {
 				return err
