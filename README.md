@@ -14,6 +14,23 @@ or run a server that stores logs on disk. Both modes use
 > LynxDB is in active development. APIs, the storage format, and query behavior
 > may change between releases.
 
+## Benchmark
+
+![JSONBench results for 1 billion events on m6i.8xlarge: combined relative time and storage size, load time, storage size and five query times for LynxDB, ClickHouse, VictoriaLogs, Elasticsearch and OpenSearch](docs/assets/jsonbench-1000m.png)
+
+[JSONBench](https://github.com/ClickHouse/ClickBench/tree/main/json) loads
+Bluesky events as JSON and times five queries over them. The chart is its
+page for 1 billion events on an AWS `m6i.8xlarge`, with five of the page's
+systems selected. It shows the Combined metric, which weighs the hot run at
+60%, the cold run at 20%, storage size at 10% and load time at 10%.
+
+The LynxDB row was measured on 2026-11-20 at commit `ad9d7e3b`. The other
+rows are the results published in ClickBench. The LynxDB entry and its raw
+results are in
+[`json/lynxdb`](https://github.com/lynxbase/ClickBench/tree/main/json/lynxdb)
+of the `lynxbase/ClickBench` fork. [BENCHMARKS.md](BENCHMARKS.md) describes
+the benchmarks kept in this repository.
+
 ## Install
 
 Build the CLI from this checkout with Go 1.26 or later.
