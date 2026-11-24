@@ -94,6 +94,10 @@ const (
 	// defaultMergeBacklog lets a burst of rows be written before the runs
 	// it leaves are merged, and bounds the runs that queries then meet.
 	defaultMergeBacklog = 64
+	// dictionaryMemoryShare is the part of the machine's memory, one in
+	// this many, that all merges together may hold in the strings they
+	// gather to give columns a dictionary of their part.
+	dictionaryMemoryShare = 16
 )
 
 // Store keeps a table in a directory, takes documents into buffers that
@@ -225,6 +229,10 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	if opts.MergeBacklog == 0 {
 		opts.MergeBacklog = defaultMergeBacklog
+	}
+	if memory := physicalMemory(); memory > 0 {
+		// What merges may hold to give columns a dictionary of their part.
+		part.SetDictionaryMemory(int64(memory / dictionaryMemoryShare))
 	}
 	opts.Part.Ordered, opts.Part.SortKey = true, opts.SortKey
 	dir, err := OpenDir(path)
