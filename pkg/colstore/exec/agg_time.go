@@ -152,6 +152,12 @@ func (x *execution) cutByTime(w *worker, p *part.Part, b *part.Block) (timeMiss,
 	cut := x.q.cut
 	if cut.untimed != nil {
 		if w.decide(cut.untimed) == some {
+			// Without a time key the records save the times of the block
+			// alone, less than testing the rest of the filter on every row
+			// costs: the filter narrows the rows by their time first.
+			if x.q.timeGranule == 0 {
+				return missFilter, nil
+			}
 			b.Ahead(w.ahead[:w.filtered])
 		}
 		if v, err := w.eval(cut.untimed, 0); err != nil || v != all {
