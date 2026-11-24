@@ -186,6 +186,13 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 
 		return nil, err
 	}
+	runs := make([]shred.Run, len(p.segs))
+	for i, sg := range p.segs {
+		runs[i] = shred.Run{Batch: sg.b, From: sg.from, To: sg.to}
+	}
+	// The rows of the part are all in memory, so the writer can tell which
+	// columns repeat across its blocks before it writes the first.
+	pw.Share(runs)
 	if len(p.segs) == 1 {
 		sg := p.segs[0]
 		for from := sg.from; from < sg.to; from += min(s.opts.BlockRows, sg.to-from) {
@@ -196,10 +203,6 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 			}
 		}
 	} else {
-		runs := make([]shred.Run, len(p.segs))
-		for i, sg := range p.segs {
-			runs[i] = shred.Run{Batch: sg.b, From: sg.from, To: sg.to}
-		}
 		picks := make([]uint32, 0, s.opts.BlockRows)
 		m := s.newSegmentMerge(p.segs)
 		for {

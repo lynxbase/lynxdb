@@ -276,7 +276,7 @@ type rowSum struct {
 	rows int
 }
 
-func sumRows(b *testing.B, parts []*part.Part) rowSum {
+func sumRows(b testing.TB, parts []*part.Part) rowSum {
 	b.Helper()
 	var out rowSum
 	var blk part.Block
@@ -326,7 +326,7 @@ func sumRows(b *testing.B, parts []*part.Part) rowSum {
 }
 
 // storeSum returns the rowSum of the store in path.
-func storeSum(b *testing.B, path string, opts StoreOptions) rowSum {
+func storeSum(b testing.TB, path string, opts StoreOptions) rowSum {
 	b.Helper()
 	opts.MergeFanIn = -1
 	s, err := OpenStore(path, opts)
