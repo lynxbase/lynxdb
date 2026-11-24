@@ -182,7 +182,7 @@ Lines that are not valid JSON are skipped and counted in `skipped_lines`. Events
 
 | HEC field | Event |
 |---|---|
-| `time` | `_time` (Unix seconds, fractions kept). Without it, a timestamp in the text, else the time of arrival |
+| `time` | `_time`. Unix seconds with an optional fraction, as a number or as a string that holds one. Without it, a timestamp in the text, else the time of arrival |
 | `event` | `_raw`; an object is stored as its JSON text, and its top-level text, number and boolean members become fields |
 | `host` | `host` |
 | `source` | `source`; when empty, the HEC `index` value |
