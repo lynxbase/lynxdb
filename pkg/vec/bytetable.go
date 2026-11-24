@@ -116,6 +116,11 @@ func (t *ByteTable) Retained() int {
 // Len returns the number of distinct keys.
 func (t *ByteTable) Len() int { return t.n }
 
+// Full reports whether the keys take half of the pages or of the ids that a
+// table has: a caller that can do without the keys it holds should then
+// clear it.
+func (t *ByteTable) Full() bool { return t.page >= tableMaxPages/2 || t.n >= tableMaxKeys/2 }
+
 // Key returns the key with the given id.
 func (t *ByteTable) Key(id int) []byte {
 	return t.keyAt(t.locs[id>>tableChunkBits][id&(tableChunk-1)])

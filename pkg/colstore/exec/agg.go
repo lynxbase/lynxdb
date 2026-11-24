@@ -291,7 +291,8 @@ func (a *aggWorker) block(n int, idx []uint32) error {
 		}
 		err = a.feed(&target{words: a.words, gid: gid, global: a.global}, n, idx)
 	}
-	if a.groups > maxTableGroups {
+	// Keys too long for the table to hold many of count as that many.
+	if a.groups > maxTableGroups || (a.table != nil && a.table.Full()) {
 		a.spill()
 	}
 
