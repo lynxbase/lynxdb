@@ -1373,6 +1373,44 @@ func TestErrorFormat(t *testing.T) {
 			t.Errorf("message: got %v, want 'query is required'", errObj["message"])
 		}
 	})
+
+	t.Run("InvalidFrom", func(t *testing.T) {
+		resp := postQuery(t, srv.Addr(), `{"q": "source=main", "from": "banana"}`)
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400", resp.StatusCode)
+		}
+		code, msg := decodeErrorResponse(t, resp)
+		if code != "VALIDATION_ERROR" || msg != invalidFromBanana {
+			t.Errorf("error = %s %q, want VALIDATION_ERROR %q", code, msg, invalidFromBanana)
+		}
+	})
+}
+
+// invalidFromBanana is the message of a time range whose from is banana.
+const invalidFromBanana = `invalid from "banana": use now, a relative time (-15m, -1h, -7d, -2w), ` +
+	`a snapped time (-1d@d, @d) or a date or time (2026-11-24, 2026-11-24T09:00:00Z)`
+
+// TestQuery_SnapBounds pins that from and to take a snap alone, which
+// truncates the time of the server.
+func TestQuery_SnapBounds(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestNDJSON(t, srv.Addr(), "main", ndjsonLines(t,
+		map[string]interface{}{"_time": "2025-01-15T08:00:00Z", "msg": "past"},
+		map[string]interface{}{"_time": "2100-01-01T00:00:00Z", "msg": "future"},
+	))
+	for body, want := range map[string]string{
+		`{"q": "source=main", "from": "@d"}`: "future",
+		`{"q": "source=main", "to": "@d"}`:   "past",
+	} {
+		events := queryEvents(t, srv.Addr(), body)
+		if len(events) != 1 || events[0]["msg"] != want {
+			t.Errorf("%s: got %v, want the %s event", body, events, want)
+		}
+	}
 }
 
 func TestQueryGet_Basic(t *testing.T) {

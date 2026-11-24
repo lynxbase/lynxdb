@@ -2,6 +2,7 @@ package rest
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
 )
 
@@ -50,6 +51,25 @@ func TestFieldValues_NonExistent(t *testing.T) {
 	data := getData(t, fmt.Sprintf("http://%s/api/v1/fields/nonexistent/values", srv.Addr()))
 	if values := data["values"].([]interface{}); len(values) != 0 {
 		t.Fatalf("values = %v, want none", values)
+	}
+}
+
+func TestFieldValues_InvalidFrom(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/fields/host/values?from=banana", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+	code, msg := decodeErrorResponse(t, resp)
+	if code != "VALIDATION_ERROR" || msg != invalidFromBanana {
+		t.Errorf("error = %s %q, want VALIDATION_ERROR %q", code, msg, invalidFromBanana)
 	}
 }
 

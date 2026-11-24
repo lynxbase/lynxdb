@@ -1,6 +1,8 @@
 package timerange
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,141 +79,155 @@ func TestFromAbsoluteRange(t *testing.T) {
 	}
 }
 
-func TestDefaultNoTimeRange(t *testing.T) {
-	// Without flags, no time range filtering — verify nil TR is handled
-	var tr *TimeRange
-	if tr != nil {
-		t.Error("expected nil time range")
+// testNow is a Tuesday.
+var testNow = time.Date(2026, 11, 24, 14, 45, 30, 500, time.UTC)
+
+func TestParse(t *testing.T) {
+	day := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		input string
+		want  time.Time
+	}{
+		{"now", testNow},
+		{"NOW", testNow},
+		{"  now  ", testNow},
+		{"-30s", testNow.Add(-30 * time.Second)},
+		{"-15m", testNow.Add(-15 * time.Minute)},
+		{"-1h", testNow.Add(-time.Hour)},
+		{"-7d", testNow.Add(-7 * 24 * time.Hour)},
+		{"-2w", testNow.Add(-14 * 24 * time.Hour)},
+		{"-0s", testNow},
+		{"-007m", testNow.Add(-7 * time.Minute)},
+		{"-1H", testNow.Add(-time.Hour)},
+		{"-15M", testNow.Add(-15 * time.Minute)},
+		{" -1h ", testNow.Add(-time.Hour)},
+		{"-1d@d", day.AddDate(0, 0, -1)},
+		{"-1D@D", day.AddDate(0, 0, -1)},
+		{"-0d@d", day},
+		{"-1h@h", time.Date(2026, 11, 24, 13, 0, 0, 0, time.UTC)},
+		{"-30m@m", time.Date(2026, 11, 24, 14, 15, 0, 0, time.UTC)},
+		{"-10s@s", time.Date(2026, 11, 24, 14, 45, 20, 0, time.UTC)},
+		{"-1w@w", time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)},
+		{"-2d@w", time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)},
+		{"@s", time.Date(2026, 11, 24, 14, 45, 30, 0, time.UTC)},
+		{"@m", time.Date(2026, 11, 24, 14, 45, 0, 0, time.UTC)},
+		{"@h", time.Date(2026, 11, 24, 14, 0, 0, 0, time.UTC)},
+		{"@d", day},
+		{"@D", day},
+		{"@w", time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)},
+		{" @d ", day},
+		{"2026-11-24", day},
+		{"2026-11-24T09:00:00Z", time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)},
+		{"2026-11-24T09:00:00.250Z", time.Date(2026, 11, 24, 9, 0, 0, 250e6, time.UTC)},
+		{"2026-11-24T09:00:00+02:00", time.Date(2026, 11, 24, 7, 0, 0, 0, time.UTC)},
+		{"2026-11-24T09:00:00", time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)},
+		{"2026-11-24 09:00:00", time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)},
+		{"2026-11-24 09:00", time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := Parse(tt.input, testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestParse_Now(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 30, 45, 123456789, time.UTC)
-	got, err := Parse("now", now)
+// TestParseSnapOfSunday pins that a week starts on the Monday before a
+// Sunday.
+func TestParseSnapOfSunday(t *testing.T) {
+	sunday := time.Date(2026, 11, 29, 23, 0, 0, 0, time.UTC)
+	got, err := Parse("@w", sunday)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Equal(now) {
-		t.Errorf("got %v, want %v", got, now)
-	}
-	// Case-insensitive
-	got2, err := Parse("NOW", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got2.Equal(now) {
-		t.Errorf("case-insensitive: got %v, want %v", got2, now)
-	}
-}
-
-func TestParse_RelativeMinutes(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 30, 0, 0, time.UTC)
-	got, err := Parse("-5m", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := now.Add(-5 * time.Minute)
-	if !got.Equal(want) {
+	if want := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
-func TestParse_RelativeHours(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 30, 0, 0, time.UTC)
-	got, err := Parse("-1h", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := now.Add(-time.Hour)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_RelativeDays(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 30, 0, 0, time.UTC)
-	got, err := Parse("-7d", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := now.Add(-7 * 24 * time.Hour)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_Absolute(t *testing.T) {
-	now := time.Now() // not used for absolute parsing
-	got, err := Parse("2026-02-14T14:00:00Z", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := time.Date(2026, 2, 14, 14, 0, 0, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_SnapToHour(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 45, 30, 0, time.UTC)
-	got, err := Parse("-1h@h", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// now - 1h = 13:45:30, snap to hour = 13:00:00
-	want := time.Date(2026, 2, 17, 13, 0, 0, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_SnapToDay(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 45, 30, 0, time.UTC)
-	got, err := Parse("-1d@d", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// now - 1d = 2026-02-16T14:45:30, snap to day = 2026-02-16T00:00:00
-	want := time.Date(2026, 2, 16, 0, 0, 0, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_SnapToMinute(t *testing.T) {
-	now := time.Date(2026, 2, 17, 14, 45, 30, 0, time.UTC)
-	got, err := Parse("-30m@m", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// now - 30m = 14:15:30, snap to minute = 14:15:00
-	want := time.Date(2026, 2, 17, 14, 15, 0, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_SnapToWeek(t *testing.T) {
-	// 2026-02-17 is a Tuesday
-	now := time.Date(2026, 2, 17, 14, 45, 30, 0, time.UTC)
-	got, err := Parse("-1w@w", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// now - 1w = 2026-02-10T14:45:30 (Tuesday), snap to Monday = 2026-02-09
-	want := time.Date(2026, 2, 9, 0, 0, 0, 0, time.UTC)
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestParse_Invalid(t *testing.T) {
-	now := time.Now()
-	invalids := []string{"", "garbage", "-@h", "-1h@xx"}
-	for _, s := range invalids {
-		if _, err := Parse(s, now); err == nil {
-			t.Errorf("expected error for %q", s)
+func TestParseRejects(t *testing.T) {
+	for _, s := range []string{
+		"", "   ", "-", "@", "-h", "-1", "1h", "15m", "1d@d",
+		"-1x", "-1y", "-1mon", "-1q", "-1h@z", "-1h@xx", "-1h@", "@x", "@dd", "@1d",
+		"--5m", "-+5m", "+1h", "- 1h", "-1 h", "-1.5h",
+		"-9999999999d", "-106752d", "-99999999999999999999s",
+		"1h30m", "-1h30m", "-1d@d-1h", "-1d@d@h",
+		"yesterday", "today", "now@d", "now-1h",
+		"2026-13-01", "2026-11-24T25:00:00Z", "2026-11-24t09:00:00z",
+	} {
+		_, err := Parse(s, testNow)
+		var pe *ParseError
+		if !errors.As(err, &pe) {
+			t.Errorf("Parse(%q) error = %v, want a *ParseError", s, err)
 		}
+	}
+}
+
+// TestParseLongestOffset pins the longest offset in days that a duration
+// holds.
+func TestParseLongestOffset(t *testing.T) {
+	got, err := Parse("-106751d", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := testNow.Add(-106751 * 24 * time.Hour); !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestParseErrorText(t *testing.T) {
+	_, errTime := Parse(" Banana-1H ", testNow)
+	_, errFrom := ParseOptionalRange("banana", "now", testNow)
+	_, errTo := ParseOptionalRange("-1h", "-1h@z", testNow)
+	_, errRange := ParseRange("--5m", "now", testNow)
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{errTime, `invalid time " Banana-1H ": `},
+		{errFrom, `invalid from "banana": `},
+		{errTo, `invalid to "-1h@z": `},
+		{errRange, `invalid from "--5m": `},
+	} {
+		if c.err == nil {
+			t.Fatalf("want an error that starts with %q", c.want)
+		}
+		msg := c.err.Error()
+		if !strings.HasPrefix(msg, c.want) {
+			t.Errorf("error %q does not start with %q", msg, c.want)
+		}
+		if strings.Count(msg, `"`) != 2 {
+			t.Errorf("error %q quotes more than the value", msg)
+		}
+		for _, form := range []string{"now", "-15m", "-1h", "-7d", "-2w", "-1d@d", "@d", "2026-11-24", "2026-11-24T09:00:00Z"} {
+			if !strings.Contains(msg, form) {
+				t.Errorf("error %q lacks the form %s", msg, form)
+			}
+		}
+		if strings.Contains(msg, "strconv") {
+			t.Errorf("error %q holds a strconv error", msg)
+		}
+	}
+}
+
+func TestParseOptionalRange(t *testing.T) {
+	tr, err := ParseOptionalRange("", "@d", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.Earliest.IsZero() || !tr.Latest.Equal(time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("got %+v, want an open start and the start of the day", tr)
+	}
+	if tr, err := ParseOptionalRange("now", "now", testNow); err != nil || !tr.Earliest.Equal(tr.Latest) {
+		t.Errorf("equal bounds: got %+v, %v, want an empty range", tr, err)
+	}
+	if _, err := ParseOptionalRange("now", "-1s", testNow); err == nil {
+		t.Error("from after to: want an error")
 	}
 }
 
