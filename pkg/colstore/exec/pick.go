@@ -29,6 +29,24 @@ type resolver struct {
 	// cells and spans are what the resolver read of whole rows.
 	cells []cell
 	spans []fieldSpan
+	// rows holds the rows of the picks of one block.
+	rows []uint32
+}
+
+// decode reads the column of ref for the rows of picks into r.col: the
+// strings of those rows alone where the block stores codes of a part
+// dictionary, whose strings lie all over it, and the whole column
+// otherwise.
+func (r *resolver) decode(ref *part.ColumnRef, picks []placed) error {
+	if !ref.Shared() {
+		return r.b.Decode(ref, &r.col)
+	}
+	r.rows = r.rows[:0]
+	for _, pk := range picks {
+		r.rows = append(r.rows, uint32(pk.loc&0xFFFF))
+	}
+
+	return r.b.DecodeRows(ref, r.rows, &r.col)
 }
 
 // keep copies v into memory that stays where it is.
@@ -79,7 +97,7 @@ func (r *resolver) read(parts []*colstore.Handle, q *query, e *sexpr, picks []pl
 		if kind == vec.KindNull {
 			err = r.b.DecodePresence(ref, &r.col)
 		} else {
-			err = r.b.Decode(ref, &r.col)
+			err = r.decode(ref, picks)
 		}
 		if err != nil {
 			return err

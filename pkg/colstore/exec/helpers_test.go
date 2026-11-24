@@ -27,6 +27,9 @@ type layout struct {
 	parts     int
 	// sortKey, when set, orders each part by these paths.
 	sortKey []string
+	// shared tells the writer of every row of a part before its blocks,
+	// so that it gives the part dictionaries where they pay.
+	shared bool
 }
 
 var layouts = []layout{
@@ -55,6 +58,9 @@ func buildTable(t testing.TB, docs [][]byte, timeField string, l layout) *colsto
 		}
 		if l.sortKey != nil {
 			all.SortBy(l.sortKey)
+		}
+		if l.shared {
+			w.Share([]shred.Run{{Batch: all, From: 0, To: all.Rows}})
 		}
 		block := shred.NewBatch(shred.Options{})
 		for row := 0; row < all.Rows; row += l.blockRows {

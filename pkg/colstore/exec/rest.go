@@ -112,7 +112,7 @@ func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, block int
 			continue
 		}
 		if ref.Kind != vec.KindNull {
-			if err := r.b.Decode(ref, &r.col); err != nil {
+			if err := r.decode(ref, picks); err != nil {
 				return err
 			}
 		}
