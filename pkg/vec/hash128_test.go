@@ -120,16 +120,40 @@ func BenchmarkHash128(b *testing.B) {
 	_ = sum
 }
 
+// BenchmarkHashSet128Add times an Add of values that a set holds, one after
+// another and after a Warm of 256 of them, in sets that fit the cache and in
+// one that does not.
 func BenchmarkHashSet128Add(b *testing.B) {
+	const batch = 256
 	for _, distinct := range []int{1 << 12, 1 << 16, 1 << 22} {
-		b.Run(fmt.Sprintf("distinct=%d", distinct), func(b *testing.B) {
-			s := NewHashSet128()
-			defer s.Release()
+		s := NewHashSet128()
+		for i := 0; i < distinct; i++ {
+			x := Mix64(uint64(i) + 1)
+			s.Add(x, x^0x5555)
+		}
+		// The values come in an order that is not the one they went in by.
+		value := func(i int) uint64 { return Mix64(Mix64(uint64(i))&uint64(distinct-1) + 1) }
+		b.Run(fmt.Sprintf("distinct=%d/one by one", distinct), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				x := Mix64(uint64(i%distinct) + 1)
+				x := value(i)
 				s.Add(x, x^0x5555)
 			}
 		})
+		b.Run(fmt.Sprintf("distinct=%d/warmed", distinct), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i += batch {
+				for j := i; j < i+batch; j++ {
+					x := value(j)
+					s.Warm(x, x^0x5555)
+				}
+				for j := i; j < i+batch; j++ {
+					x := value(j)
+					s.Add(x, x^0x5555)
+				}
+			}
+		})
+		s.Release()
 	}
+
 }

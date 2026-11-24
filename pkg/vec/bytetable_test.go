@@ -161,46 +161,51 @@ func TestByteTableKeepsItsPagesThroughClear(t *testing.T) {
 	}
 }
 
-// tableOf returns a table of distinct keys shaped like account ids and a
-// batch of keys drawn from them.
-func tableOf(a *mem.Arena, distinct, batch int) (*ByteTable, [][]byte) {
-	tbl := NewByteTable(a)
+// tableOf returns a table of distinct keys shaped like account ids, and
+// lookups keys drawn from them, laid out as the values of a flat column.
+func tableOf(a *mem.Arena, distinct, lookups int) (tbl *ByteTable, data []byte, offsets []uint32) {
+	tbl = NewByteTable(a)
 	for i := 0; i < distinct; i++ {
 		tbl.ID([]byte(fmt.Sprintf("did:plc:%024d", i)))
 	}
 	r := rand.New(rand.NewSource(1))
-	keys := make([][]byte, batch)
-	for i := range keys {
-		keys[i] = []byte(fmt.Sprintf("did:plc:%024d", r.Intn(distinct)))
+	offsets = append(offsets, 0)
+	for i := 0; i < lookups; i++ {
+		data = fmt.Appendf(data, "did:plc:%024d", r.Intn(distinct))
+		offsets = append(offsets, uint32(len(data)))
 	}
 
-	return tbl, keys
+	return tbl, data, offsets
 }
 
 // BenchmarkByteTableLookups times a lookup of keys that a table holds, one
-// by one and by batch, in tables that fit the cache and in one that does not.
+// by one and by batch, in tables that fit the cache and in one that does
+// not. The keys are a million draws, so that those of a large table are
+// not the ones just looked up.
 func BenchmarkByteTableLookups(b *testing.B) {
-	const batch = 16384
+	const lookups, batch = 1 << 20, 16384
 	for _, distinct := range []int{1 << 12, 1 << 16, 1 << 21} {
 		a := mem.NewArena()
-		tbl, keys := tableOf(a, distinct, batch)
+		tbl, data, offsets := tableOf(a, distinct, lookups)
 		b.Run(fmt.Sprintf("distinct=%d/one by one", distinct), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				tbl.ID(keys[i&(batch-1)])
+				j := i & (lookups - 1)
+				tbl.ID(data[offsets[j]:offsets[j+1]])
 			}
 		})
 		b.Run(fmt.Sprintf("distinct=%d/by batch", distinct), func(b *testing.B) {
-			data, offsets := batchKeys(keys)
 			hashes := make([]uint64, batch)
 			ids := make([]uint32, batch)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i += batch {
-				for j, k := range keys {
-					hashes[j] = Hash(k)
+				from := i & (lookups - 1)
+				keys := Keys{Data: data, Offsets: offsets[from : from+batch+1]}
+				for j := range hashes {
+					hashes[j] = Hash(keys.at(j))
 				}
-				tbl.IDs(ids, hashes, &Keys{Data: data, Offsets: offsets}, nil, 0)
+				tbl.IDs(ids, hashes, &keys, nil, 0)
 			}
 		})
 		tbl.Release()
