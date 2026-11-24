@@ -90,9 +90,13 @@ func (d *Dictionary) fill(dst *vec.Column, codes []uint32, sparse bool, rows int
 	// The string of the code before lies from from to to.
 	prev, from, to := ^uint32(0), 0, 0
 	next := 0
-	// Every code has a string of the one length, packed: each is unpacked
-	// where it lies once its pages are checked.
-	plain := d.liveLen == 0 && d.reader.lead == 0
+	// Strings that are all of the one length, packed, are unpacked where
+	// they lie once their pages are checked, and the bits that tell which
+	// codes have a string are checked for the whole block at once.
+	plain, holes := d.reader.lead == 0, d.liveLen != 0
+	if holes && !d.checkedLive() {
+		return ErrCorrupt
+	}
 	r, stride := &d.reader, d.reader.stride
 	slot, span := uint64(r.slot), uint64(r.slot+7)/8+8
 	for row := 0; row < rows; row++ {
@@ -103,19 +107,29 @@ func (d *Dictionary) fill(dst *vec.Column, codes []uint32, sparse bool, rows int
 		code := codes[next]
 		next++
 		start := len(data)
-		switch {
-		case code == prev:
+		if code == prev {
 			data = append(data, data[from:to]...)
-		case plain:
-			at := uint64(code) * slot >> 3
-			if int(code) >= d.stored || !d.checked(at, min(span, d.slotsLen-at)) {
+			prev, from, to = code, start, len(data)
+
+			continue
+		}
+		i, ok := int(code), int(code) < d.stored
+		if holes {
+			i, ok = d.rank(code)
+		}
+		if !ok {
+			return ErrCorrupt
+		}
+		if plain {
+			at := uint64(i) * slot >> 3
+			if !d.checked(at, min(span, d.slotsLen-at)) {
 				return ErrCorrupt
 			}
 			data = data[:start+stride]
-			r.put(data[start:], int(code), int(code)+1)
-		default:
+			r.put(data[start:], i, i+1)
+		} else {
 			var err error
-			if data, err = d.Value(data, code); err != nil {
+			if data, err = d.entry(data, i); err != nil {
 				return err
 			}
 		}

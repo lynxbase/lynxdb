@@ -328,6 +328,30 @@ func (d *Dictionary) index(code uint32) (int, error) {
 	return int(n) + bits.OnesCount64(w&(1<<(code&63)-1)), nil
 }
 
+// rank is index for a dictionary some of whose codes lack a string, once
+// the caller has checked the bits that tell which, as a reader of many
+// strings does for all of them at once: it reads those bits as they lie and
+// reports whether code, which is below the number of codes, has a string.
+func (d *Dictionary) rank(code uint32) (int, bool) {
+	live := d.data[d.slotsLen+d.exceptLen:]
+	word := uint64(code) >> 6
+	w := binary.LittleEndian.Uint64(live[8*word:])
+	if w>>(code&63)&1 == 0 {
+		return 0, false
+	}
+	block := uint64(code) / liveBlock
+	n := uint64(binary.LittleEndian.Uint32(live[8*uint64((d.codes+63)/64)+4*block:]))
+	for i := block * (liveBlock / 64); i < word; i++ {
+		n += uint64(bits.OnesCount64(binary.LittleEndian.Uint64(live[8*i:])))
+	}
+
+	return int(n) + bits.OnesCount64(w&(1<<(code&63)-1)), true
+}
+
+// checkedLive reports whether the bits that tell which codes have a string
+// match their checksums.
+func (d *Dictionary) checkedLive() bool { return d.checked(d.slotsLen+d.exceptLen, d.liveLen) }
+
 // code returns the code of stored string i.
 func (d *Dictionary) code(i int) (uint32, error) {
 	if d.liveLen == 0 {

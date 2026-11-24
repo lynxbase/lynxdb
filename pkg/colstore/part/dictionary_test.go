@@ -98,6 +98,48 @@ func TestDictionaryOfStringsThatDoNotPack(t *testing.T) {
 	}
 }
 
+func TestDamageToADictionaryWithGapsIsFound(t *testing.T) {
+	opts := Options{Ordered: true, SortKey: sharedKey}
+	var srcs []*Part
+	for i := range 3 {
+		srcs = append(srcs, plannedPart(t, keyedDocs(int64(i+1), 12000, 400, 1200), 2048, opts))
+	}
+	// A range leaves codes without strings when rows outside it, in the
+	// blocks at its ends, hold strings that no row inside it does.
+	var whole *Part
+	var d *Dictionary
+	cuts := [][]byte{nil, AppendKeyString(nil, []byte("key0100")), AppendKeyString(nil, []byte("key0250")), nil}
+	for i := 0; i+1 < len(cuts) && (d == nil || d.liveLen == 0); i++ {
+		whole = mergeKeyRange(t, srcs, opts, 4096, cuts[i], cuts[i+1])
+		id, _ := whole.PathID("did")
+		d, _ = whole.Dictionary(id)
+	}
+	if d == nil || d.liveLen == 0 {
+		t.Fatal("no dictionary whose codes lack strings")
+	}
+	rng := rand.New(rand.NewSource(2))
+	for try := 0; try < 200; try++ {
+		data := bytes.Clone(whole.data)
+		// Any bit of the bits that tell which codes have a string, or of
+		// the numbers of strings before every run of them.
+		at := int(d.off+d.slotsLen+d.exceptLen) + rng.Intn(int(d.liveLen))
+		data[at] ^= 1 << rng.Intn(8)
+		p, err := Open(data)
+		if err != nil {
+			t.Fatalf("a part with a damaged dictionary does not open: %v", err)
+		}
+		if err := decodeAll(p, "did"); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("a flipped bit at byte %d of %d: decoding returned %v", at-int(d.off+d.slotsLen+d.exceptLen), d.liveLen, err)
+		}
+		// A merge that reads the codes of the part finds it too.
+		var buf bytes.Buffer
+		w := NewWriter(&buf, opts)
+		if err := Merge(w, []*Part{p, srcs[0]}, 4096); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("a merge of the damaged part returned %v", err)
+		}
+	}
+}
+
 // pagesRead counts the pages of d that were read, and so checked, since the
 // last Recheck.
 func pagesRead(d *Dictionary) int {

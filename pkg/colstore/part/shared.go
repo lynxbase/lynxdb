@@ -566,12 +566,24 @@ func (sp *sharedPlan) eachUsed(add func(val []byte)) error {
 func (sp *sharedPlan) fromDict(src int32, codes, locals []uint32) error {
 	s := &sp.srcs[src]
 	d := s.dict
+	// The bits that tell which codes have a string are checked for all
+	// the codes at once.
+	holes := d.liveLen != 0
+	if holes && !d.checkedLive() {
+		return ErrCorrupt
+	}
 	prev, prevLocal, prevCode := ^uint32(0), uint32(0), uint32(0)
 	for i, c := range codes {
 		if c != prev {
-			at, err := d.index(c)
-			if err != nil {
-				return err
+			at, ok := int(c), int(c) < d.stored
+			if holes {
+				at, ok = int(c), int(c) < d.codes
+				if ok {
+					at, ok = d.rank(c)
+				}
+			}
+			if !ok {
+				return ErrCorrupt
 			}
 			prev, prevLocal, prevCode = c, uint32(at), s.codes.get(at)
 		}
