@@ -1142,6 +1142,35 @@ func TestServerQuery_TimeFlags(t *testing.T) {
 	}
 }
 
+// TestServerFieldValues_TimeFlags pins that fields --values counts the
+// values of the events in the range of its time flags.
+func TestServerFieldValues_TimeFlags(t *testing.T) {
+	baseURL := setupMultiIndexServer(t)
+
+	for _, c := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"--from", "2025-01-15T08:05:00.157Z"}, 400},
+		{[]string{"--to", "2025-01-15T08:05:00.157Z"}, 600},
+		{[]string{"--since", "1h"}, 0},
+	} {
+		args := append([]string{"--server", baseURL, "--format", "json", "fields", "level", "--values",
+			"--source", "idx_access"}, c.args...)
+		stdout, _, err := runCmd(t, args...)
+		if err != nil {
+			t.Fatalf("%q: %v", c.args, err)
+		}
+		sum := 0
+		for _, row := range mustParseJSON(t, stdout) {
+			sum += int(row["count"].(float64))
+		}
+		if sum != c.want {
+			t.Errorf("%q: values count %d events, want %d", c.args, sum, c.want)
+		}
+	}
+}
+
 // Group 7: Multi-Index Cross-Queries
 
 func TestServerQuery_BackendIndex_JSONFields(t *testing.T) {

@@ -96,6 +96,18 @@ func TestExit2_TimeFlags(t *testing.T) {
 	}
 }
 
+// TestExit2_FieldValuesTimeFlags pins that fields --values refuses its time
+// flags as query does, before a request.
+func TestExit2_FieldValuesTimeFlags(t *testing.T) {
+	r := runLynxDB(t, "--server", "http://127.0.0.1:1", "fields", "status", "--values", "--since", "1h", "--to", "now")
+	if r.ExitCode != 2 {
+		t.Errorf("exit code %d, want 2 (usage)\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	if want := "ERROR: --since and --to cannot be used together\n"; !strings.Contains(r.Stderr, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, r.Stderr)
+	}
+}
+
 func TestExit3_ConnectionRefused(t *testing.T) {
 	// Port 1 is almost certainly not listening.
 	r := runLynxDB(t, "--server", "http://127.0.0.1:1", "status")

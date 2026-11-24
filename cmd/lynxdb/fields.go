@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,9 +21,6 @@ func init() {
 func newFieldsCmd() *cobra.Command {
 	var (
 		values bool
-		since  string
-		from   string
-		to     string
 		source string
 		prefix string
 	)
@@ -45,10 +43,15 @@ Use --values to see top values for a field, optionally within a time range.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeFieldNames,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			f := cmd.Flags()
 			if len(args) == 1 && values {
-				return runFieldValues(args[0], since, from, to, source)
+				tr, err := timeRangeOf(f, "", time.Now())
+				if err != nil {
+					return err
+				}
+				return runFieldValues(args[0], tr, source)
 			}
-			if since != "" || from != "" || to != "" {
+			if f.Changed("since") || f.Changed("from") || f.Changed("to") {
 				return fmt.Errorf("--since, --from and --to apply to --values only")
 			}
 			if len(args) == 1 {
@@ -61,9 +64,9 @@ Use --values to see top values for a field, optionally within a time range.`,
 
 	f := cmd.Flags()
 	f.BoolVar(&values, "values", false, "Show top values for the specified field")
-	f.StringVarP(&since, "since", "s", "", "Restrict values to a time range (e.g., 15m, 1h, 7d)")
-	f.StringVar(&from, "from", "", "Absolute start time of values (ISO 8601)")
-	f.StringVar(&to, "to", "", "Absolute end time of values (ISO 8601)")
+	f.StringP("since", "s", "", "Count values from this time until now: 15m, -1h, -1d@d, @d, 2026-11-24")
+	f.String("from", "", "Start of the time range of values: -1h, -1d@d, @d, now, 2026-11-24T09:00:00Z")
+	f.String("to", "", "End of the time range of values, exclusive: -1h, @d, now, 2026-11-24T09:00:00Z")
 	f.StringVar(&source, "source", "", "Restrict to one index")
 	f.StringVar(&prefix, "prefix", "", "Filter fields by name prefix")
 
@@ -211,14 +214,13 @@ func fieldValueRows(values []client.FieldValue) [][]any {
 }
 
 // runFieldValues shows top values for a named field.
-func runFieldValues(name, since, from, to, source string) error {
+func runFieldValues(name string, tr timeRange, source string) error {
 	ctx := context.Background()
 
 	result, err := apiClient().FieldValuesFiltered(ctx, name, client.FieldValuesOpts{
 		Limit: 50,
-		Since: since,
-		From:  from,
-		To:    to,
+		From:  tr.from,
+		To:    tr.to,
 		Index: source,
 	})
 	if err != nil {
