@@ -360,12 +360,6 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 					continue
 				}
-				// A block that the range cuts may hold no row inside it.
-				if (lo < minT || hi > maxT) && h.NoneWithin(i, minT, maxT) {
-					stats.SkippedByTime++
-
-					continue
-				}
 				if empty != nil && empty.Has(i) {
 					stats.SkippedAsEmpty++
 
@@ -408,6 +402,17 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			}
 		}
 		p := parts[u.part].Part
+		// A block that the range cuts may hold no row inside it, which its
+		// rows by bucket of time tell; reading them takes microseconds a
+		// block, so the scan's goroutines do it.
+		if (u.first < minT || u.last > maxT) && p.NoneWithin(int(u.block), minT, maxT) {
+			late.Add(1)
+			if empty := empties[u.part]; empty != nil {
+				empty.Add(int(u.block))
+			}
+
+			return true
+		}
 		may, err := mayContainAll(p, int(u.block), opts.Tokens)
 		for k := 0; k < len(sets) && may && err == nil; k++ {
 			if id := ids[int(u.ids)+k]; id != unprobed {

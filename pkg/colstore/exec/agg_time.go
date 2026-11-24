@@ -217,8 +217,11 @@ func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, timeMiss,
 	rows, total := uint64(0), uint64(0)
 	for _, c := range ts.counts {
 		start, end := c.Bucket*width, c.Bucket*width+width-1
-		if end < lo || start > hi {
+		if end < lo {
 			continue
+		}
+		if start > hi {
+			break
 		}
 		n := uint64(c.Rows)
 		if start < lo || end > hi {
