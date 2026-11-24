@@ -60,6 +60,10 @@ func (c *Column) placeRun(row, n int) {
 // column already holds; the same holds for the other Append methods.
 func (c *Column) AppendNull(row int) { c.placeRun(row, 1) }
 
+// AppendPlaces records that rows row to row+n-1 hold a value each without
+// taking the values, which the caller keeps beside the column.
+func (c *Column) AppendPlaces(row, n int) { c.placeRun(row, n) }
+
 // AppendBool appends a boolean at row.
 func (c *Column) AppendBool(row int, v bool) {
 	c.placeRun(row, 1)

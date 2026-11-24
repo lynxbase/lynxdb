@@ -41,6 +41,7 @@ type decodeScratch struct {
 	ints    []int64
 	codes8  []uint8
 	codes16 []uint16
+	codes32 []uint32
 	timed   timedValues
 	huff    *huff0.Scratch
 	// valueOffsets holds the offsets of the values of a sparse timed chunk

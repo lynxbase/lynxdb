@@ -36,6 +36,11 @@ type Part struct {
 	detached bool
 	// counts holds, by path id, the rows of the values of counted paths.
 	counts map[uint32]*Counts
+	// dicts holds, by path id, the dictionary of every string column that
+	// blocks store as codes, and is nil when the part has none; dictFooter
+	// is the bytes that the footer spends on them.
+	dicts      []*Dictionary
+	dictFooter int
 	// sound has a bit for every column of every block, at the place of its
 	// directory entry, that is set once the bytes of the column were seen
 	// to match their checksum, until Recheck clears it; advised has one
@@ -264,7 +269,8 @@ func Open(data []byte) (*Part, error) {
 	p.RawBytes = r.uvarint()
 	p.MinTime = unzigzag(r.uvarint())
 	p.MaxTime = unzigzag(r.uvarint())
-	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath || !p.readCounts(&r) || !p.readTimeCounts(&r) {
+	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath || !p.readCounts(&r) || !p.readTimeCounts(&r) ||
+		!p.readDictionaries(&r, dirsOff) {
 		return nil, ErrCorrupt
 	}
 	// The filters of a group's blocks fill every stripe, those of one
@@ -407,6 +413,11 @@ func (p *Part) KeyRuns(i, depth int) int {
 func (p *Part) SetBlockData(data []byte) {
 	if len(data) == len(p.data) {
 		p.blocks = data
+		for _, d := range p.dicts {
+			if d != nil {
+				d.bind(data)
+			}
+		}
 	}
 }
 
@@ -469,6 +480,11 @@ func (p *Part) directory(i int, e []byte) ([]byte, error) {
 // at once.
 func (p *Part) SetReadAhead(fn func(off, n int)) {
 	p.readAhead = fn
+	for _, d := range p.dicts {
+		if d != nil {
+			d.readAhead = fn
+		}
+	}
 	if fn != nil && len(p.dirs) > 0 {
 		fn(p.dirsOff, len(p.dirs))
 	}
@@ -880,6 +896,11 @@ func (p *Part) ForgetReadAhead() {
 		p.advised[i].Store(0)
 		p.advisedHead[i].Store(0)
 	}
+	for _, d := range p.dicts {
+		if d != nil {
+			d.asked.Store(false)
+		}
+	}
 	p.Recheck()
 }
 
@@ -896,6 +917,11 @@ func (p *Part) Recheck() {
 	for i := range p.groups {
 		for j := range p.groups[i].sound {
 			p.groups[i].sound[j].Store(0)
+		}
+	}
+	for _, d := range p.dicts {
+		if d != nil {
+			d.recheck()
 		}
 	}
 }
@@ -1583,6 +1609,10 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, rows int,
 		if ref.Kind == vec.KindString {
 			return b.decodeTimed(ref, sparse, rows, dst)
 		}
+	case encShared:
+		if ref.Kind == vec.KindString {
+			return b.decodeShared(ref, chunk, sparse, rows, dst)
+		}
 	}
 
 	return ErrCorrupt
@@ -1599,6 +1629,12 @@ func (b *Block) dataSize(ref *ColumnRef) uint32 {
 		return uint32(len(ref.constVal))
 	case encTimed:
 		return b.timedDataSize(ref)
+	case encShared:
+		if d, ok := b.part.Dictionary(ref.PathID); ok {
+			return uint32(ref.Count * d.reader.stride)
+		}
+
+		return 0
 	}
 	chunk := b.data[ref.off : ref.off+ref.length]
 	ok := true
@@ -1973,6 +2009,9 @@ func (r *reader) uint64() uint64 {
 func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, bool, error) {
 	if ref.bad {
 		return dst, false, ErrCorrupt
+	}
+	if ref.Kind == vec.KindString && ref.enc == encShared {
+		return b.findShared(ref, want, dst)
 	}
 	if ref.Kind != vec.KindString || (ref.enc != encFlat && ref.enc != encDict) {
 		return dst, false, nil

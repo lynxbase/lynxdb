@@ -11,10 +11,12 @@ import (
 //	header   magic, version
 //	blocks   each: column chunks; behind the last block of a filter group,
 //	         the group's token filters in stripes
+//	dicts    the dictionaries of the string columns that blocks store as
+//	         codes of them
 //	dirs     the column directory of every block
 //	footer   path names, sort key, block index, filters, filter groups,
 //	         first keys, totals, the rows of the values of counted paths,
-//	         the rows of every block by bucket of time
+//	         the rows of every block by bucket of time, the dictionaries
 //	trailer  footer offset, footer length, footer checksum, version, magic
 //
 // A token's probe reads one cell of a filter, and which n-th of the filter
@@ -30,7 +32,7 @@ import (
 // written in.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 16
+	formatVersion = 17
 
 	headerSize  = 8
 	trailerSize = 28
@@ -96,6 +98,8 @@ const (
 	// row time or the numbers of another column of the block in any form,
 	// which decoding them reads.
 	encTimed = 5
+	// encShared strings are codes of the part's dictionary of the path.
+	encShared = 6
 )
 
 const (

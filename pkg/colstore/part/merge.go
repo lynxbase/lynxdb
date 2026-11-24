@@ -126,6 +126,7 @@ func MergeRangeLimit(w *Writer, srcs []*Part, blockRows int, lo, hi []byte, limi
 		}
 		c.slots = grow(c.slots, len(p.paths)*kindSlots)
 		clear(c.slots)
+		c.plans = c.plans[:0]
 		c.keyIDs = c.keyIDs[:0]
 		for _, path := range w.opts.SortKey {
 			id, ok := p.PathID(path)
@@ -142,8 +143,17 @@ func MergeRangeLimit(w *Writer, srcs []*Part, blockRows int, lo, hi []byte, limi
 		c.advance(m)
 		m.cursors = append(m.cursors, c)
 	}
+	err := m.planShared()
+	if err == nil {
+		err = m.run()
+	}
+	if err != nil {
+		// A writer that failed is not closed, and its plans hold memory of
+		// the budget of all merges.
+		w.dropPlans()
+	}
 
-	return m.run()
+	return err
 }
 
 // shortShare is how many blocks a merge writes for every block under half
@@ -184,6 +194,12 @@ type merger struct {
 	lastCols []vec.Column
 	// space decodes the cursors' blocks, which decode one at a time.
 	space anchorSpace
+	// shares holds, by path, what the blocks of the range hold as strings,
+	// shareIdx where each path is in it, and shareCol the strings of a
+	// block read for a dictionary.
+	shares   []pathShare
+	shareIdx map[string]int32
+	shareCol vec.Column
 }
 
 var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
@@ -200,6 +216,7 @@ var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
 		cursors: m.cursors[:0], tree: m.tree[:0], winners: m.winners[:0],
 		keyBuf: m.keyBuf[:0], times: m.times[:0], lastCols: m.lastCols,
 		counts: m.counts[:0], unsorted: m.unsorted[:0], space: m.space,
+		shares: m.shares[:0], shareIdx: m.shareIdx, shareCol: m.shareCol,
 	}
 
 	return true
@@ -263,14 +280,29 @@ type mergeCursor struct {
 	lazyUsed int
 	// pathMap gives the destination's id of each path of the part.
 	pathMap []uint32
+	// firstBlock and endBlock bound the blocks of the part that the merge
+	// may read. By path of the part: shareOf is the place of the path among
+	// those the merge looks at, sharedVals the values that those blocks hold
+	// as codes, plans the plan of the column that the output shares and
+	// planSrc the number of the part's dictionary among its sources.
+	firstBlock, endBlock int
+	shareOf              []int32
+	sharedVals           []uint64
+	plans                []*sharedPlan
+	planSrc              []int32
+	// sbuf holds the codes of each column of the block that the output
+	// shares, nil for the others, taken from sbufs.
+	sbuf  []*sharedBuf
+	sbufs []sharedBuf
 }
 
 // densePlan is how the rows of a column without gaps reach the output.
 type densePlan struct {
-	col  *vec.Column
-	out  *shred.Column
-	lazy *lazyColumn
-	mode uint8
+	col    *vec.Column
+	out    *shred.Column
+	lazy   *lazyColumn
+	shared *sharedBuf
+	mode   uint8
 }
 
 const (
@@ -279,6 +311,7 @@ const (
 	denseFloats
 	denseBytes
 	denseLazy
+	denseShared
 )
 
 // exhausted stands in for a cursor that gave its buffers back.
@@ -305,6 +338,11 @@ var cursorPool = mem.Pool[mergeCursor]{Reset: func(c *mergeCursor) bool {
 	clear(c.outs)
 	clear(c.slots)
 	clear(c.lazy)
+	clear(c.plans)
+	clear(c.sbuf)
+	for i := range c.sbufs {
+		c.sbufs[i].plan = nil
+	}
 	for i := range c.dense {
 		c.dense[i] = densePlan{}
 	}
@@ -546,6 +584,8 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 	c.lazy = grow(c.lazy, n)
 	clear(c.lazy)
 	c.lazyUsed = 0
+	c.sbuf = grow(c.sbuf, n)
+	clear(c.sbuf)
 	for i := range c.dense {
 		c.dense[i] = densePlan{}
 	}
@@ -559,7 +599,14 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 			continue
 		}
 		col := &c.cols[j].Column
-		if !c.isKey[j] {
+		switch {
+		case c.isKey[j]:
+		case ref.Kind == vec.KindString && len(c.plans) > 0 && c.plans[ref.PathID] != nil:
+			var err error
+			if c.sbuf[j], err = c.decodeShared(j, c.plans[ref.PathID]); err != nil {
+				return err
+			}
+		default:
 			lazy, err := c.openLazy(j)
 			if err == nil && !lazy {
 				err = c.decode(j)
@@ -576,8 +623,10 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 		}
 		c.outs[j] = oc
 		if col.Valid == nil {
-			plan := densePlan{col: col, out: oc, lazy: c.lazy[j]}
+			plan := densePlan{col: col, out: oc, lazy: c.lazy[j], shared: c.sbuf[j]}
 			switch {
+			case plan.shared != nil:
+				plan.mode = denseShared
 			case plan.lazy != nil:
 				plan.mode = denseLazy
 			case col.Layout != vec.Flat:
@@ -674,6 +723,10 @@ func (c *mergeCursor) emit(m *merger, n int) error {
 			oc.AppendByteRun(o, col.Data, col.Offsets[a:a+n+1])
 		case denseLazy:
 			p.lazy.put(oc, a, o, n)
+		case denseShared:
+			sb := p.shared
+			sb.plan.put(sb.src, sb.codes[a:a+n], sb.locals[a:a+n])
+			oc.AppendPlaces(o, n)
 		default:
 			for i := 0; i < n; i++ {
 				copyValue(oc, col, a+i, o+i)
@@ -691,6 +744,12 @@ func (c *mergeCursor) emit(m *merger, n int) error {
 		}
 		if l := c.lazy[j]; l != nil {
 			l.put(c.outs[j], at, row+shift, 1)
+
+			continue
+		}
+		if sb := c.sbuf[j]; sb != nil {
+			sb.plan.put(sb.src, sb.codes[at:at+1], sb.locals[at:at+1])
+			c.outs[j].AppendNull(row + shift)
 
 			continue
 		}

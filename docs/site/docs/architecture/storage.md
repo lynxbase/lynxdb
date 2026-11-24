@@ -121,14 +121,15 @@ The store attempts to flush outstanding writes at graceful shutdown. A process k
 
 ## Parts
 
-The current part format uses the `LXPT` magic and version 16. The reader requires the current version. A file puts chunks for consecutive blocks in order, with token-filter pages interleaved by group. The column directories are stored together after the data, followed by the footer and trailer.
+The current part format uses the `LXPT` magic and version 17. The reader requires the current version. A file puts chunks for consecutive blocks in order, with token-filter pages interleaved by group. Part dictionaries and the column directories are stored after the data, followed by the footer and trailer.
 
 ```text
 [header]
   [block chunks ...] [token-filter pages for the group]
   [block chunks ...] [token-filter pages for the group]
+[part dictionaries]
 [column directories for all blocks]
-[footer: paths, block and filter offsets, key metadata, value and time counts]
+[footer: paths, block and filter offsets, key metadata, value and time counts, part dictionaries]
 [trailer: footer location, length, checksum, version and magic]
 ```
 
@@ -138,6 +139,7 @@ A column directory entry identifies a path and kind, gives the number of present
 | --- | --- |
 | Constant | One value in the directory, with presence data if sparse |
 | Dictionary | Sorted distinct values and codes for present rows. Eligible dictionaries also carry counts per code. |
+| Part dictionary codes | Codes for present rows that point into one sorted dictionary shared by all blocks of the part |
 | Flat | Values stored in row order, with the codec for the type |
 | Time reference | A numeric timestamp column that can reuse the block's canonical time values with an exact scale |
 | Timed strings | Numeric differences and packed digits for suitable strings, such as time-ordered IDs and timestamps in a consistent RFC 3339 layout |
@@ -146,6 +148,8 @@ A column directory entry identifies a path and kind, gives the number of present
 Sparse chunks use a bitmap, a list of present rows or a list of holes. String and variant payloads can use Zstandard, LZ4 or uncompressed bytes. Some fixed-width strings use a packed alphabet. The writer chooses among available encodings based on the data and codec options. Timed strings can encode differences from the row timestamp or another column whose values provide a reference. The encoding keeps enough information to reconstruct the original strings, including exceptions. A reader may need to follow those column references within the block.
 
 Dictionaries and their row codes have separate checksums. A reader can load and verify the dictionary alone when a query only needs its distinct values or per-value counts.
+
+A string column whose values repeat across the blocks of a part can use a part dictionary instead of a form per block. The writer chooses it for columns outside the sort key whose values mostly share one length and a small alphabet, such as account and content identifiers, and only when the dictionary and the codes take at least one eighth less than the per-block forms. The dictionary stores each distinct value once, sorted by bytes and packed at a few bits per character, so a reader finds a value by code or a code by value without decoding the rest. Every 4 KiB page of a dictionary has its own checksum, verified when the page is first read.
 
 The reader memory-maps the parts. It checks the footer at open and verifies directories, column chunks and token-filter pages as they are used. Read-ahead for column data targets the chunks a block will use. The [indexing guide](./indexing.md) covers how footer and directory metadata decide which bytes a scan needs.
 

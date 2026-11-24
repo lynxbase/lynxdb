@@ -110,6 +110,18 @@ type Writer struct {
 	// trials holds, per path and kind, how the values of a flat column are
 	// encoded.
 	trials []trial
+	// plans holds, by path, the plan of every string column that the part
+	// shares, planned of them. dry is set while a column is encoded only to
+	// learn its size, which leaves the sums and the tokens as they are.
+	plans   map[string]*sharedPlan
+	planned int
+	dry     bool
+	// shareSkip counts, by path, the parts that the writer writes before it
+	// thinks of sharing the column again; shareSeen and shareRuns serve
+	// Share.
+	shareSkip map[string]uint8
+	shareSeen map[string]struct{}
+	shareRuns []valueRun
 
 	blobs  blobCodec // every section but the values of flat columns
 	values blobCodec
@@ -199,6 +211,16 @@ type writerBuffers struct {
 	timedBuf   timedScratch
 	timedRefs  []timedRef
 	anchorCost []int
+	// codes32 and locals32 hold the codes of a shared column of the block,
+	// own the columns of the block that are not shared, recoded the chunks
+	// of a block copied with other codes; dictw and dictFooter write the
+	// dictionaries.
+	codes32    []uint32
+	locals32   []uint32
+	own        []*shred.Column
+	recoded    []recodedChunk
+	dictw      dictWriter
+	dictFooter []byte
 }
 
 // ownedTokens names a column that gets a filter of its own and the end of
@@ -217,7 +239,11 @@ var writerPool = mem.Pool[writerBuffers]{Reset: func(b *writerBuffers) bool {
 	// Directory entries alias the values of the last batch.
 	clear(b.ents[:cap(b.ents)])
 
-	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes)+cap(b.filterData)+cap(b.pages)+8*cap(b.tokenKeys) <= maxWriterBytes
+	clear(b.own[:cap(b.own)])
+	b.dictw.w, b.dictw.l = nil, nil
+
+	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes)+cap(b.filterData)+cap(b.pages)+8*cap(b.tokenKeys)+
+		cap(b.dictw.pending)+cap(b.dictw.otherData) <= maxWriterBytes
 }}
 
 // errClosed reports a write to a writer after Close.
@@ -264,6 +290,8 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 		w.writerBuffers = writerPool.Get()
 	}
 	w.w, w.opts, w.off, w.err, w.copied = out, opts, 0, nil, 0
+	w.dropPlans()
+	w.dry = false
 	clear(w.trials)
 	w.paths = w.paths[:0]
 	clear(w.ids)
@@ -325,7 +353,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	w.encodeInts(&ent, b.Times)
 	w.finish(&ent, 0)
 	w.times = b.Times
-	w.findAnchors(b.Columns(), b.Times)
+	w.findAnchors(w.ownColumns(b), b.Times)
 	for _, c := range b.Columns() {
 		if c.Count == 0 {
 			continue
@@ -561,10 +589,12 @@ func (w *Writer) writePages(pages []byte) {
 // stored. The level and codec of its sections are not recorded, so a writer
 // that asks for the compact level or another codec than the default one
 // encodes every block itself, and so does one told that src was written at
-// another level.
+// another level. A block that stores columns as codes of the dictionaries of
+// src is copied with the codes of w's, when w shares those columns too.
 func (w *Writer) copies(src *Part, i int) bool {
 	return w.opts.Level != LevelCompact && w.opts.Codec == CodecZstd &&
-		(w.opts.NoTokenFilter || len(src.groups) > 0) && (w.opts.Stored == nil || w.opts.Stored(src))
+		(w.opts.NoTokenFilter || len(src.groups) > 0) && (w.opts.Stored == nil || w.opts.Stored(src)) &&
+		((w.planned == 0 && src.dicts == nil) || w.sharesAlike(src, i))
 }
 
 // joinGroup makes the group being built one that the filters first to end
@@ -618,11 +648,19 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	}
 	entries := size + int(n)*dirEntrySize
 
-	w.block = append(w.block[:0], data...)
+	if err := w.copyChunks(src, data, dir[size:entries]); err != nil {
+		return err
+	}
 	newDir := len(w.block)
 	w.block = append(w.block, dir[:entries]...)
 	// Path ids are per part, and entries stay ordered by id and kind.
 	ents := w.block[newDir+size:]
+	for _, rc := range w.recoded {
+		e := ents[rc.at*dirEntrySize:]
+		binary.LittleEndian.PutUint32(e[12:], rc.off)
+		binary.LittleEndian.PutUint32(e[16:], rc.length)
+		binary.LittleEndian.PutUint32(e[20:], rc.crc)
+	}
 	sorted, prev := true, uint64(0)
 	for at := 0; at < len(ents); at += dirEntrySize {
 		id := binary.LittleEndian.Uint32(ents[at:])
@@ -780,7 +818,9 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 		w.encodeFloats(&ent, c.Floats)
 	case vec.KindString, vec.KindVariant:
 		w.column.Reset()
-		w.encodeBytes(&ent, c)
+		if sp := w.sharedPlan(c.Path); sp == nil || c.Kind != vec.KindString || !w.encodeShared(&ent, c, sp) {
+			w.encodeBytes(&ent, c)
+		}
 		if !w.opts.NoTokenFilter {
 			w.filterColumn(ent.pathID, c.Kind, len(w.block)-start)
 		}
@@ -914,7 +954,7 @@ func (w *Writer) encodeFloats(ent *dirEntry, vals []float64) {
 }
 
 func (w *Writer) tokenize(kind vec.Kind, val []byte) {
-	if w.opts.NoTokenFilter {
+	if w.opts.NoTokenFilter || w.dry {
 		return
 	}
 	if kind == vec.KindVariant {
@@ -1161,6 +1201,9 @@ func (w *Writer) sumCopied(src *Part, i int, pathMap []uint32) error {
 
 // sumEach adds the values of a column that stores each of them.
 func (w *Writer) sumEach(pathID uint32, c *shred.Column) {
+	if w.dry {
+		return
+	}
 	if c.Kind != vec.KindString {
 		w.noSum(pathID)
 
@@ -1175,7 +1218,7 @@ func (w *Writer) sumEach(pathID uint32, c *shred.Column) {
 // sum adds rows that hold value at a path.
 func (w *Writer) sum(pathID uint32, value []byte, rows uint64) {
 	s := w.pathSum(pathID)
-	if s.off {
+	if s.off || w.dry {
 		return
 	}
 	at, ok := s.index[string(value)]
@@ -1198,6 +1241,9 @@ func (w *Writer) sum(pathID uint32, value []byte, rows uint64) {
 
 // noSum tells that a block holds values at a path that are not counted.
 func (w *Writer) noSum(pathID uint32) {
+	if w.dry {
+		return
+	}
 	s := w.pathSum(pathID)
 	s.off, s.index, s.rows = true, nil, nil
 }
@@ -1493,6 +1539,7 @@ func (w *Writer) Close() error {
 	footer = binary.AppendUvarint(footer, uint64(len(w.groups)/groupEntrySize))
 	footer = append(footer, w.filters...)
 	footer = append(footer, w.groups...)
+	dicts := w.writeDictionaries()
 	footer = binary.AppendUvarint(footer, w.off)
 	footer = binary.AppendUvarint(footer, uint64(len(w.dirs)))
 	w.write(w.dirs)
@@ -1509,6 +1556,7 @@ func (w *Writer) Close() error {
 	footer = w.appendSums(footer)
 	footer = binary.AppendUvarint(footer, uint64(len(w.timeCounts)))
 	footer = append(footer, w.timeCounts...)
+	footer = append(footer, dicts...)
 
 	footerOff := w.off
 	w.write(footer)
@@ -1519,6 +1567,7 @@ func (w *Writer) Close() error {
 	binary.LittleEndian.PutUint32(trailer[20:], formatVersion)
 	binary.LittleEndian.PutUint32(trailer[24:], fileMagic)
 	w.write(trailer[:])
+	w.dropPlans()
 	writerPool.Put(w.writerBuffers)
 	w.writerBuffers, w.verifiedGroup = nil, nil
 	err := w.err

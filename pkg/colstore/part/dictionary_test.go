@@ -1,0 +1,98 @@
+package part
+
+import (
+	"bytes"
+	"errors"
+	"math/rand"
+	"testing"
+
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
+
+// decodeAll decodes the string column at path in every block of p.
+func decodeAll(p *Part, path string) error {
+	id, _ := p.PathID(path)
+	var b Block
+	var col vec.Column
+	for i := 0; i < p.NumBlocks(); i++ {
+		if err := p.OpenBlock(i, &b); err != nil {
+			return err
+		}
+		if ref, ok := b.Column(id, vec.KindString); ok {
+			if err := b.Decode(ref, &col); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func TestDamageToADictionaryIsFound(t *testing.T) {
+	docs := accountDocs(20000, 1500, 97, 4)
+	whole := plannedPart(t, docs, 2048, Options{})
+	id, _ := whole.PathID("did")
+	d, ok := whole.Dictionary(id)
+	if !ok || d.exceptions == 0 {
+		t.Fatalf("no dictionary with strings kept as they are")
+	}
+	rng := rand.New(rand.NewSource(1))
+	for try := 0; try < 200; try++ {
+		data := bytes.Clone(whole.data)
+		// Any bit of the sections: slots, strings kept as they are, and the
+		// checksums of their pages.
+		at := int(d.off) + rng.Intn(int(d.size))
+		data[at] ^= 1 << rng.Intn(8)
+		p, err := Open(data)
+		if err != nil {
+			t.Fatalf("a part with a damaged dictionary does not open: %v", err)
+		}
+		if err := decodeAll(p, "did"); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("a flipped bit at byte %d of the dictionary's %d: decoding returned %v", at-int(d.off), d.size, err)
+		}
+		// The column beside it reads as before.
+		if err := decodeAll(p, "unique"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A page is checked once, and again after Recheck.
+	data := bytes.Clone(whole.data)
+	p, err := Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeAll(p, "did"); err != nil {
+		t.Fatal(err)
+	}
+	data[int(d.off)+100] ^= 4
+	if err := decodeAll(p, "did"); err != nil {
+		t.Fatalf("a page seen to be sound was checked again: %v", err)
+	}
+	p.Recheck()
+	if err := decodeAll(p, "did"); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("after Recheck decoding returned %v", err)
+	}
+}
+
+func TestDictionaryOfStringsThatDoNotPack(t *testing.T) {
+	// Strings of one length whose bytes come from more symbols than a
+	// packed section takes stay in the forms of single blocks.
+	r := rand.New(rand.NewSource(5))
+	values := make([]string, 300)
+	for i := range values {
+		b := make([]byte, 16)
+		for j := range b {
+			b[j] = byte(33 + r.Intn(90))
+		}
+		values[i] = string(bytes.ReplaceAll(bytes.ReplaceAll(b, []byte(`"`), []byte("x")), []byte(`\`), []byte("y")))
+	}
+	docs := make([]string, 12000)
+	for i := range docs {
+		docs[i] = `{"v":"` + values[r.Intn(len(values))] + `"}`
+	}
+	p := plannedPart(t, docs, 2048, Options{})
+	checkDocs(t, p, docs)
+	if shared, _ := sharedBlocks(t, p, "v"); shared != 0 {
+		t.Fatalf("%d blocks share a column whose strings do not pack", shared)
+	}
+}
