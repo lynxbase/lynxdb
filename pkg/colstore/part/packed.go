@@ -323,9 +323,11 @@ func readSymbols(dst, src []byte, rawLen int, s *packScratch) ([]byte, error) {
 }
 
 // packedReader writes the strings of a packed section body from where the
-// body lies, any run of them at a time.
+// body lies, any run of them at a time. The codes of string i begin lead bits
+// into slot i of slot bits, which in a section body is the bits of a string.
 type packedReader struct {
 	stride, count, bitsPerString int
+	slot, lead                   int
 	template, codes              []byte
 	schedule                     []packStep
 	table                        []byte
@@ -334,15 +336,35 @@ type packedReader struct {
 // open readies r for a packed section body of rawLen bytes, whose tables it
 // keeps in s.
 func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
-	stride64, used := binary.Uvarint(src)
-	if used <= 0 || stride64 == 0 || stride64 > uint64(rawLen) || uint64(rawLen)%stride64 != 0 || len(src)-used < 1 {
+	codes, err := r.readHead(src, s)
+	if err != nil {
+		return err
+	}
+	if r.stride > rawLen || rawLen%r.stride != 0 {
 		return ErrCorrupt
 	}
-	stride, count := int(stride64), rawLen/int(stride64)
+	count := rawLen / r.stride
+	if need := (uint64(count)*uint64(r.bitsPerString) + 7) / 8; r.bitsPerString == 0 || uint64(len(codes)) < need {
+		return ErrCorrupt
+	}
+	r.count, r.codes = count, codes
+
+	return nil
+}
+
+// readHead readies r for strings laid out as the head of a packed section
+// body at the start of src tells, keeping its tables in s, and returns the
+// bytes after the head. It leaves the codes and their count to the caller.
+func (r *packedReader) readHead(src []byte, s *packScratch) ([]byte, error) {
+	stride64, used := binary.Uvarint(src)
+	if used <= 0 || stride64 == 0 || stride64 > uint64(len(src)) || len(src)-used < 1 {
+		return nil, ErrCorrupt
+	}
+	stride := int(stride64)
 	n := int(src[used])
 	src = src[used+1:]
 	if n < 1 || n > 1<<maxPackedBits || len(src) < n+3*stride {
-		return ErrCorrupt
+		return nil, ErrCorrupt
 	}
 	var symbols [2 << maxPackedBits]byte
 	copy(symbols[:], src[:n])
@@ -356,7 +378,7 @@ func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
 		}
 		// A code is a base below 64 plus up to 6 bits, inside symbols.
 		if width > maxPackedBits || base >= 1<<maxPackedBits {
-			return ErrCorrupt
+			return nil, ErrCorrupt
 		}
 		s.varPos = append(s.varPos, p)
 		s.width = append(s.width, width)
@@ -364,9 +386,6 @@ func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
 		bitsPerString += int(width)
 	}
 	varPos, widths := s.varPos, s.width
-	if need := (uint64(count)*uint64(bitsPerString) + 7) / 8; len(varPos) == 0 || uint64(len(codes)) < need {
-		return ErrCorrupt
-	}
 	// One word of codes yields at least 57 bits wherever it starts. A step
 	// ends where the width changes or the bytes stop being adjacent, so
 	// that the steps of a key's body all take the fast path below.
@@ -382,11 +401,11 @@ func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
 		s.schedule = append(s.schedule, step)
 	}
 	*r = packedReader{
-		stride: stride, count: count, bitsPerString: bitsPerString,
-		template: template, codes: codes, schedule: s.schedule, table: s.table,
+		stride: stride, bitsPerString: bitsPerString, slot: bitsPerString,
+		template: template, schedule: s.schedule, table: s.table,
 	}
 
-	return nil
+	return codes, nil
 }
 
 // put writes the strings from from to to, below count, one after another
@@ -394,8 +413,8 @@ func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
 func (r *packedReader) put(out []byte, from, to int) {
 	stride, codes, table := r.stride, r.codes, r.table
 	var tail [16]byte
-	bitPos := uint64(from) * uint64(r.bitsPerString)
 	for i := 0; i < to-from; i++ {
+		bitPos := uint64(from+i)*uint64(r.slot) + uint64(r.lead)
 		val := out[i*stride : (i+1)*stride]
 		copy(val, r.template)
 		for _, step := range r.schedule {
