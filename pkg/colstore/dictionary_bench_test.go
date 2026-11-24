@@ -33,8 +33,9 @@ var repeatedColumns = []string{
 // benchmark. It reports the rows a second of the flushes and of the two
 // compactions, the peak of the heap while compacting, the bytes of the
 // store, and for the columns whose values repeat across blocks the bytes a
-// value and the nanoseconds a value of decoding them, with the pages of the
-// parts in memory. LYNXDB_BENCH_DICT_ROWS sets the events (4Mi by default),
+// value, their part dictionaries among them, and the nanoseconds a value of
+// decoding their strings and, where blocks store codes of a part dictionary,
+// the codes alone, with the pages of the parts in memory. LYNXDB_BENCH_DICT_ROWS sets the events (4Mi by default),
 // LYNXDB_BENCH_DICT_RUNS the runs of each half (8), LYNXDB_BENCH_DICT_USERS
 // the accounts (a sixteenth of the events), LYNXDB_BENCH_DICT_FAVOUR the
 // power that favours the active ones (2) and LYNXDB_BENCH_DICT_POSTS the
@@ -55,38 +56,38 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 			TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, FlushLevel: part.LevelFastest,
 		}},
 	}
-	g := benchdata.New(1, users).Favour(favour).Posts(posts)
-	chunks := make([][]byte, 2*runs)
-	for i := range chunks {
-		chunks[i] = g.Append(nil, rows/len(chunks))
-	}
-	loaded := rows / len(chunks) * len(chunks)
+	loaded := rows / (2 * runs) * (2 * runs)
 	for _, d := range designs {
 		b.Run(d.name, func(b *testing.B) {
 			var flush, first, second time.Duration
 			var peak uint64
 			var report string
+			var chunk []byte
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 				dir := filepath.Join(b.TempDir(), "store")
 				opts := d.opts
 				opts.MergeFanIn = -1
+				g := benchdata.New(1, users).Favour(favour).Posts(posts)
 				b.StartTimer()
 				s, err := OpenStore(dir, opts)
 				if err != nil {
 					b.Fatal(err)
 				}
-				load := func(chunks [][]byte) {
-					begin := time.Now()
-					for _, chunk := range chunks {
+				// The events of a run are made as it is loaded, so that the
+				// heap holds one run of them and what the store holds.
+				load := func() {
+					for range runs {
+						chunk = g.Append(chunk[:0], loaded/(2*runs))
+						begin := time.Now()
 						if _, err := s.Append(chunk); err != nil {
 							b.Fatal(err)
 						}
 						if err := s.Sync(); err != nil {
 							b.Fatal(err)
 						}
+						flush += time.Since(begin)
 					}
-					flush += time.Since(begin)
 				}
 				compact := func() time.Duration {
 					watch := heapWatch()
@@ -99,9 +100,9 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 
 					return took
 				}
-				load(chunks[:runs])
+				load()
 				first += compact()
-				load(chunks[runs:])
+				load()
 				second += compact()
 				b.StopTimer()
 				if i == 0 {
@@ -140,8 +141,35 @@ func repeatedReport(b *testing.B, s *Store) string {
 	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "parts %d, rows %d, bytes %d, bytes/row %.2f\n", u.Parts, u.Rows, u.Bytes, float64(u.Bytes)/float64(u.Rows))
-	fmt.Fprintf(&out, "%-34s %10s %12s %8s %8s  %s\n", "column", "values", "bytes", "B/value", "ns/value", "encodings")
-	for _, path := range repeatedColumns {
+	var parts []*part.Part
+	for _, h := range snap.Parts() {
+		parts = append(parts, h.Part)
+	}
+	// A sum over the values of every row, which a change of how they are
+	// stored leaves as it is.
+	fmt.Fprintf(&out, "sum of rows %x\n", sumRows(b, parts).sum)
+	fmt.Fprintf(&out, "%-34s %10s %12s %8s %10s %12s %8s %8s  %s\n",
+		"column", "values", "bytes", "B/value", "entries", "dict-bytes", "ns/value", "ns/code", "encodings")
+	columns := repeatedColumns
+	if os.Getenv("LYNXDB_BENCH_DICT_ALL") != "" {
+		// Every string column, for looking into a difference.
+		columns = nil
+		for key := range u.Columns {
+			if key.Kind == vec.KindString {
+				columns = append(columns, key.Path)
+			}
+		}
+		slices.Sort(columns)
+		for name, n := range u.Regions {
+			fmt.Fprintf(&out, "region %s %d\n", name, n)
+		}
+		for key, c := range u.Columns {
+			if key.Kind != vec.KindString {
+				fmt.Fprintf(&out, "other %s/%s %d\n", key.Path, key.Kind, columnBytes(c)+c.FilterBytes)
+			}
+		}
+	}
+	for _, path := range columns {
 		c := u.Columns[part.ColumnKey{Path: path, Kind: vec.KindString}]
 		if c == nil {
 			continue
@@ -152,23 +180,38 @@ func repeatedReport(b *testing.B, s *Store) string {
 			encodings = append(encodings, fmt.Sprintf("%s:%d", name, a.Blocks))
 		}
 		slices.Sort(encodings)
-		fmt.Fprintf(&out, "%-34s %10d %12d %8.2f %8.1f  %s\n", path, c.Values, size, float64(size)/float64(c.Values),
-			decodeCost(b, snap.Parts(), path), strings.Join(encodings, " "))
+		var entries uint64
+		var dict int64
+		if c.Dictionary != nil {
+			entries, dict = c.Dictionary.Entries, c.Dictionary.Bytes
+		}
+		fmt.Fprintf(&out, "%-34s %10d %12d %8.2f %10d %12d %8.1f %8.1f  %s\n", path, c.Values, size, float64(size)/float64(c.Values),
+			entries, dict, decodeCost(b, snap.Parts(), path, false), decodeCost(b, snap.Parts(), path, true), strings.Join(encodings, " "))
 	}
 
 	return out.String()
 }
 
-// columnBytes returns the bytes that a column takes in its parts, the token
-// filters of its own left out.
-func columnBytes(c *part.ColumnUsage) int64 { return c.ChunkBytes + c.DirectoryBytes }
+// columnBytes returns the bytes that a column takes in its parts, its part
+// dictionaries among them and the token filters of its own left out.
+func columnBytes(c *part.ColumnUsage) int64 {
+	size := c.ChunkBytes + c.DirectoryBytes
+	if c.Dictionary != nil {
+		size += c.Dictionary.Bytes
+	}
+
+	return size
+}
 
 // decodeCost returns the nanoseconds a value that decoding the string
-// column at path takes over all blocks of parts, the lower of two passes.
-func decodeCost(b *testing.B, parts []*Handle, path string) float64 {
+// column at path takes over all blocks of parts, the lower of two passes;
+// with codes set it reads the codes of the blocks that store codes of a
+// part dictionary and no other block, and returns zero when there is none.
+func decodeCost(b *testing.B, parts []*Handle, path string, codes bool) float64 {
 	b.Helper()
 	var blk part.Block
 	var col vec.Column
+	var buf []uint32
 	best := time.Duration(1<<63 - 1)
 	values := 0
 	for range 2 {
@@ -184,10 +227,16 @@ func decodeCost(b *testing.B, parts []*Handle, path string) float64 {
 					b.Fatal(err)
 				}
 				ref, ok := blk.Column(id, vec.KindString)
-				if !ok || ref.Count == 0 {
+				if !ok || ref.Count == 0 || (codes && !ref.Shared()) {
 					continue
 				}
-				if err := blk.Decode(ref, &col); err != nil {
+				var err error
+				if codes {
+					buf, err = blk.DecodeShared(ref, &col, buf)
+				} else {
+					err = blk.Decode(ref, &col)
+				}
+				if err != nil {
 					b.Fatal(err)
 				}
 				values += ref.Count
@@ -195,6 +244,9 @@ func decodeCost(b *testing.B, parts []*Handle, path string) float64 {
 		}
 		best = min(best, time.Since(begin))
 	}
+	if values == 0 {
+		return 0
+	}
 
-	return float64(best.Nanoseconds()) / float64(max(values, 1))
+	return float64(best.Nanoseconds()) / float64(values)
 }
