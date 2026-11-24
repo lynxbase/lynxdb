@@ -19,7 +19,7 @@ type monotone struct {
 	marks []uint64
 }
 
-const markEvery = 256
+const markEvery = 64
 
 // reset readies m for n numbers below bound, reusing its memory.
 func (m *monotone) reset(n int, bound uint64) {

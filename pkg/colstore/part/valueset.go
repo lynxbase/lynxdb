@@ -30,8 +30,12 @@ type valueSet struct {
 	added uint64
 }
 
-// maxSetBytes bounds the buffers that a pooled valueSet keeps.
-const maxSetBytes = 16 << 20
+// maxSetBytes bounds the buffers that a pooled valueSet keeps, and
+// maxSetKeys the keys that a set keeps once it is sealed.
+const (
+	maxSetBytes = 64 << 20
+	maxSetKeys  = 1 << 16
+)
 
 var valueSets = mem.Pool[valueSet]{Reset: func(v *valueSet) bool {
 	v.reset()
@@ -144,9 +148,30 @@ func (v *valueSet) number(val []byte) (uint32, bool) {
 // number that number returned.
 func (v *valueSet) place(number uint32) uint32 { return v.rank[number] }
 
+// reserve makes room for n strings of size bytes together, so that adding
+// that many moves nothing.
+func (v *valueSet) reserve(n, size int) {
+	if cap(v.data) < size {
+		v.data = append(make([]byte, 0, size), v.data...)
+	}
+	if cap(v.ends) < n {
+		v.ends = append(make([]uint32, 0, n), v.ends...)
+		v.hash = append(make([]uint64, 0, n), v.hash...)
+	}
+	slots := max(len(v.slots), 1024)
+	for slots < 2*n {
+		slots *= 2
+	}
+	if slots > len(v.slots) {
+		v.widenTo(slots)
+	}
+}
+
 // widen doubles the slots.
-func (v *valueSet) widen() {
-	size := max(2*len(v.slots), 1024)
+func (v *valueSet) widen() { v.widenTo(max(2*len(v.slots), 1024)) }
+
+// widenTo makes the slots size of them, a power of two.
+func (v *valueSet) widenTo(size int) {
 	if cap(v.slots) < size {
 		v.slots = make([]uint32, size)
 	} else {
@@ -215,7 +240,14 @@ func (v *valueSet) seal() {
 	for place, k := range v.keys {
 		v.order[place], v.rank[k.entry] = k.entry, uint32(place)
 	}
+	// The keys of a large set are as large again as its strings.
+	if cap(v.keys) > maxSetKeys {
+		v.keys, v.spare = nil, nil
+	}
 }
+
+// numbered returns the string with a number that number returned.
+func (v *valueSet) numbered(number uint32) []byte { return v.data[v.start(number):v.ends[number]] }
 
 // value returns the string at place in the order of bytes.
 func (v *valueSet) value(place int) []byte {
