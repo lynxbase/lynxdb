@@ -152,7 +152,7 @@ Put the same settings in the `tls` and `auth` sections of the config file to kee
 | Port | Purpose |
 |------|---------|
 | 3100/tcp | HTTP API (`listen`) |
-| 4318/tcp | OTLP/HTTP listener (`ingest.otlp.http_listen`, on all interfaces by default, without auth) |
+| 4318/tcp | OTLP/HTTP listener (`ingest.otlp.http_listen`), when it is set to an address other hosts can reach. The default is `localhost:4318`, and the config above turns it off. It has no TLS; with auth on it needs a key with the `ingest` scope. |
 | 5514/udp, 5514/tcp, 6514/tcp | Syslog, when configured |
 
 ```bash
