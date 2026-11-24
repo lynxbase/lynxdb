@@ -270,7 +270,7 @@ func CellMayContain(cell []byte, h uint64, cells int) bool {
 
 			continue
 		}
-		at = 64*word + selectBit(zeros, skip-1) + 1
+		at = 64*word + SelectBit(zeros, skip-1) + 1
 
 		break
 	}
@@ -300,11 +300,11 @@ var selectInByte = func() (t [256 << 3]uint8) {
 	return t
 }()
 
-// selectBit returns the place of the k-th set bit of x, k from 0, which x
+// SelectBit returns the place of the k-th set bit of x, k from 0, which x
 // must have: the byte that holds it from the sums of the set bits of the
 // bytes up to each, after Vigna's broadword selection, then the bit within
 // it from a table.
-func selectBit(x uint64, k int) int {
+func SelectBit(x uint64, k int) int {
 	const ones, highs = 0x0101010101010101, 0x8080808080808080
 	s := x - x>>1&0x5555555555555555
 	s = s&0x3333333333333333 + s>>2&0x3333333333333333
