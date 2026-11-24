@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"math/bits"
 
-	"github.com/cespare/xxhash/v2"
-
 	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
@@ -108,9 +106,6 @@ func (t *ByteTable) Release() {
 func (t *ByteTable) Retained() int {
 	return 8*(cap(t.slots)+cap(t.cand)) + 4*cap(t.pending)
 }
-
-// Hash returns the hash ByteTable uses for key.
-func Hash(key []byte) uint64 { return xxhash.Sum64(key) }
 
 // Len returns the number of distinct keys.
 func (t *ByteTable) Len() int { return t.n }

@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"math"
 
+	"github.com/cespare/xxhash/v2"
+
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -226,7 +228,9 @@ func hashFloat(v float64) uint64 {
 
 func hashBool(v bool) uint64 { return vec.Mix64(uint64(btoi(v)) ^ kindSeeds[vec.KindBool]) }
 
-func hashBytes(kind vec.Kind, v []byte) uint64 { return vec.Hash(v) ^ kindSeeds[kind] }
+// The hash of a string is not that of the tables of groups: the estimate of
+// a count depends on it.
+func hashBytes(kind vec.Kind, v []byte) uint64 { return xxhash.Sum64(v) ^ kindSeeds[kind] }
 
 // feedHashes adds the values of one kind in the n rows listed in rows, or
 // the first n rows when it is nil, to the distinct-count states of an
