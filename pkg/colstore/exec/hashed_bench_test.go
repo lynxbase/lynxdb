@@ -289,7 +289,9 @@ func peakHeap(fn func()) uint64 {
 // LYNXDB_BENCH_HASHED_DAYS the days they cover (4),
 // LYNXDB_BENCH_HASHED_DIR a directory that keeps the store between runs and
 // LYNXDB_BENCH_HASHED_PROFILE one that receives a CPU profile of the timed
-// runs of every query.
+// runs of every query. LYNXDB_BENCH_HASHED_STAGE sets the megabytes of
+// groups that the workers of a query hold before they merge them while they
+// scan, which a query over many more events than these does by itself.
 // Beside the time it reports the CPU time per aggregated row, the memory
 // the query held at its end and the most that the heap grew by during a
 // run.
@@ -300,6 +302,9 @@ func BenchmarkHashed(b *testing.B) {
 	workers := 0
 	if os.Getenv("LYNXDB_BENCH_HASHED_WORKERS") != "" {
 		workers = envOr(b, "LYNXDB_BENCH_HASHED_WORKERS", 0)
+	}
+	if os.Getenv("LYNXDB_BENCH_HASHED_STAGE") != "" {
+		defer exec.SetStageBudget(envOr(b, "LYNXDB_BENCH_HASHED_STAGE", 0) << 20)()
 	}
 	dir := filepath.Join(b.TempDir(), "store")
 	if kept := os.Getenv("LYNXDB_BENCH_HASHED_DIR"); kept != "" {

@@ -87,6 +87,12 @@ func (t *ByteTable) setSlots(n int) {
 	t.fpShift = 64 - min(tableFingerprint, 32-t.idBits)
 }
 
+// SetArena makes a the arena that the table allocates from, for a table
+// that goroutines take turns to add keys to, each from an arena of its own.
+// What the table holds stays where it is, so every arena it was given must
+// outlive it.
+func (t *ByteTable) SetArena(a *mem.Arena) { t.arena = a }
+
 // Clear removes every key and keeps the table's memory.
 func (t *ByteTable) Clear() {
 	clear(t.slots)

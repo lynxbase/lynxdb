@@ -2,7 +2,6 @@ package exec
 
 import (
 	"encoding/binary"
-	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -17,11 +16,12 @@ var serialGroups = 4096
 type merger struct {
 	*mergeScratch
 	arena *mem.Arena
-	table *vec.ByteTable
 	set   *vec.HashSet128
-	// heap holds the states of variable size of the groups being merged.
-	heap stateHeap
-	n    int
+	// own holds the groups that the merger is merging: those of one
+	// partition after another that no worker merged groups into.
+	own groupPartition
+	// lookup serves the merges of the groups that workers left staged.
+	lookup lookup
 	// users counts the distinct values per distinct count and shared group.
 	users [][]int64
 	sink  sink
@@ -29,7 +29,6 @@ type merger struct {
 
 // mergeScratch is the memory a merger keeps between queries.
 type mergeScratch struct {
-	words  []int64
 	batch  []colVec
 	post   postEval
 	having havingEval
@@ -41,7 +40,7 @@ func (m *merger) held() int {
 	if m.arena == nil {
 		return 0
 	}
-	n := 8*used(m.words) + m.post.held() + m.having.held() + m.sink.held() + m.arena.Size()
+	n := m.post.held() + m.having.held() + m.sink.held() + m.arena.Size() + m.own.held() + m.lookup.held()
 	for i := range m.users {
 		n += 8 * cap(m.users[i])
 	}
@@ -57,7 +56,6 @@ func (x *execution) merger(slot int) *merger {
 	m := &x.mergers[slot]
 	if m.arena == nil {
 		m.mergeScratch = mergeScratchPool.Get()
-		m.words = m.words[:0]
 		for i := range m.batch {
 			m.batch[i].reset()
 		}
@@ -66,8 +64,8 @@ func (x *execution) merger(slot int) *merger {
 		}
 		m.post.rows = x.rows
 		m.arena = mem.NewArena()
-		m.heap.init(m.arena)
-		m.table = vec.NewByteTable(m.arena)
+		m.own.heap.init(m.arena)
+		m.own.table = vec.NewByteTable(m.arena)
 		m.sink.init(x.q)
 	}
 
@@ -82,13 +80,13 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 	slots := len(x.workers)
 	x.mergers = make([]merger, slots)
 	floats := make([]bool, len(plan.args))
-	logged, total := false, 0
+	staged, total := false, 0
 	for _, w := range ws {
 		x.rows += w.matched
 		for i, f := range w.agg.floats {
 			floats[i] = floats[i] || f
 		}
-		logged = logged || w.agg.log != nil
+		staged = staged || w.agg.staged != nil
 		total += w.agg.groups
 	}
 	var distinct [][]int64
@@ -100,14 +98,15 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 	}
 
 	m := x.merger(0)
+	own := &m.own
 	switch {
 	case len(plan.keys) == 0:
 		words := append([]int64(nil), plan.init...)
 		for _, w := range ws {
-			plan.merge(&m.heap, words, &w.agg.heap, w.agg.words[:stride])
+			plan.merge(&own.heap, words, &w.agg.heap, w.agg.words[:stride])
 		}
-		m.emit(x, nil, words, 1, floats, distinct)
-	case !logged && total <= serialGroups && x.shared != nil:
+		m.emit(x, nil, words, &own.heap, 1, floats, distinct)
+	case !staged && total <= serialGroups && x.shared != nil:
 		// The shared ids number the groups of every worker alike.
 		groups := x.shared.table.Len()
 		words := make([]int64, 0, groups*stride)
@@ -117,42 +116,55 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 		for _, w := range ws {
 			for g := 0; g < w.agg.groups; g++ {
 				id := int(w.agg.global[g])
-				plan.merge(&m.heap, words[id*stride:(id+1)*stride], &w.agg.heap, w.agg.words[g*stride:(g+1)*stride])
+				plan.merge(&own.heap, words[id*stride:(id+1)*stride], &w.agg.heap, w.agg.words[g*stride:(g+1)*stride])
 			}
 		}
 		if groups > 0 {
-			m.emit(x, x.shared.table, words, groups, floats, distinct)
+			m.emit(x, x.shared.table, words, &own.heap, groups, floats, distinct)
 		}
-	case !logged && total <= serialGroups:
+	case !staged && total <= serialGroups:
 		for _, w := range ws {
 			for g := 0; g < w.agg.groups; g++ {
 				state := w.agg.words[g*stride : (g+1)*stride]
-				id := m.table.IDHashed(w.agg.table.Key(g), w.agg.table.KeyHash(g))
-				if id == m.n {
-					m.n++
-					m.words = append(m.words, state...)
+				id := own.table.IDHashed(w.agg.table.Key(g), w.agg.table.KeyHash(g))
+				if id == own.n {
+					own.n++
+					own.words = append(wordPool.Grow(own.words, stride), state...)
 					if len(plan.states) != 0 {
-						plan.adoptStates(&m.heap, m.words[id*stride:], &stateSource{heap: &w.agg.heap, words: state})
+						plan.adoptStates(&own.heap, own.words[id*stride:], &stateSource{heap: &w.agg.heap, words: state})
 					}
 
 					continue
 				}
-				plan.merge(&m.heap, m.words[id*stride:(id+1)*stride], &w.agg.heap, state)
+				plan.merge(&own.heap, own.words[id*stride:(id+1)*stride], &w.agg.heap, state)
 			}
 		}
-		if m.n > 0 {
-			m.emit(x, m.table, m.words, m.n, floats, distinct)
+		if own.n > 0 {
+			m.emit(x, own.table, own.words, &own.heap, own.n, floats, distinct)
 		}
 	default:
 		if err := forEach(len(ws), slots, func(_, i int) { ws[i].agg.spill() }); err != nil {
 			return nil, err
 		}
-		// A key lives in one partition, so partitions merge independently.
-		err := forEach(1<<partitionBits, slots, func(slot, partition int) {
+		// A key lives in one partition, so a partition is complete once it
+		// has what the workers left staged for it. The groups of a partition
+		// that no worker merged any into while it scanned live no longer
+		// than it takes to hand them on.
+		err := forEach(1<<x.partBits, slots, func(slot, p int) {
 			m := x.merger(slot)
-			m.partition(plan, partition, ws)
-			if m.n > 0 {
-				m.emit(x, m.table, m.words, m.n, floats, distinct)
+			gp, cold := &m.own, false
+			if x.parts != nil && x.parts[p].table != nil {
+				gp, cold = &x.parts[p], true
+			} else {
+				gp.reset()
+			}
+			for _, w := range ws {
+				if w.agg.staged != nil {
+					w.agg.staged.Chunks(p, func(chunk []byte) { gp.merge(plan, chunk, m.arena, &m.lookup, cold) })
+				}
+			}
+			if gp.n > 0 {
+				m.emit(x, gp.table, gp.words, &gp.heap, gp.n, floats, distinct)
 			}
 		})
 		if err != nil {
@@ -169,45 +181,7 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 	return sinks, nil
 }
 
-// partition merges the logged states of one partition of every worker.
-func (m *merger) partition(plan *aggPlan, partition int, ws []*worker) {
-	stride := len(plan.words)
-	m.table.Clear()
-	m.heap.reset()
-	records := 0
-	for _, w := range ws {
-		if w.agg.log != nil {
-			records += w.agg.log.Len(partition)
-		}
-	}
-	m.words, m.n = slices.Grow(m.words[:0], records*stride), 0
-	for _, w := range ws {
-		if w.agg.log == nil {
-			continue
-		}
-		w.agg.log.Each(partition, func(h uint64, rec []byte) {
-			key, state, tail := plan.splitRecord(rec)
-			g := m.table.IDHashed(key, h)
-			if g == m.n {
-				m.n++
-				for i := 0; i < stride; i++ {
-					m.words = append(m.words, int64(binary.LittleEndian.Uint64(state[8*i:])))
-				}
-				if len(plan.states) != 0 {
-					plan.adoptStates(&m.heap, m.words[g*stride:], &stateSource{tail: tail})
-				}
-
-				return
-			}
-			plan.mergeRecord(m.words[g*stride:(g+1)*stride], state)
-			if len(plan.states) != 0 {
-				plan.mergeStates(&m.heap, m.words[g*stride:(g+1)*stride], &stateSource{tail: tail})
-			}
-		})
-	}
-}
-
-// mergeRecord folds a logged state into dst.
+// mergeRecord folds the state of a staged group into dst.
 func (ap *aggPlan) mergeRecord(dst []int64, state []byte) {
 	for i, w := range ap.words {
 		v := int64(binary.LittleEndian.Uint64(state[8*i:]))
@@ -237,8 +211,9 @@ func (ap *aggPlan) mergeRecord(dst []int64, state []byte) {
 }
 
 // emit computes the plan's columns for n groups, whose keys table numbers
-// and whose states are in words, and hands them to the merger's sink.
-func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, n int, floats []bool, distinct [][]int64) {
+// and whose states are in words and in h, and hands them to the merger's
+// sink.
+func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, h *stateHeap, n int, floats []bool, distinct [][]int64) {
 	plan := x.q.agg
 	keys := len(plan.keys)
 	m.batch = fit(m.batch, len(plan.names))
@@ -256,7 +231,7 @@ func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, n int, 
 		}
 	}
 	for i := range plan.outs {
-		plan.column(&plan.outs[i], words, &m.heap, n, floats, distinct, &m.batch[keys+i])
+		plan.column(&plan.outs[i], words, h, n, floats, distinct, &m.batch[keys+i])
 	}
 	out := m.batch
 	if x.q.having != nil && !x.q.early {

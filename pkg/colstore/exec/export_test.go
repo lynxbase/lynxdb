@@ -26,6 +26,16 @@ func SetLimits(tableGroups, serial int) (restore func()) {
 	return func() { maxTableGroups, serialGroups = oldTable, oldSerial }
 }
 
+// SetStageBudget changes the bytes of groups that the workers of a query
+// hold together before they merge them while they scan, and returns a
+// function that restores it.
+func SetStageBudget(bytes int) (restore func()) {
+	old := stageBudget
+	stageBudget = bytes
+
+	return func() { stageBudget = old }
+}
+
 // DistinctHash returns the hash that ApproxDistinct gives a value.
 func DistinctHash(v Value) uint64 {
 	switch v.Kind {

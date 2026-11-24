@@ -160,6 +160,9 @@ func newWorker(x *execution) *worker {
 // release returns the worker's memory; nothing it produced may be used
 // afterwards.
 func (w *worker) release() {
+	if w.agg.table != nil {
+		w.agg.table.Release()
+	}
 	w.arena.Free()
 	clear(w.refs)
 	for i := range w.views {

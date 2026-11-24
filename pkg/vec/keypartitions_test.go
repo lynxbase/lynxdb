@@ -39,7 +39,8 @@ func TestKeyPartitionsKeepRecordsInOrderPerPartition(t *testing.T) {
 		r.Read(rec)
 		h := r.Uint64()
 		p.Add(h, rec)
-		want[h>>(64-bits)] = append(want[h>>(64-bits)], record{h, rec})
+		part := PartitionOf(h, bits)
+		want[part] = append(want[part], record{h, rec})
 	}
 	for i := range want {
 		if p.Len(i) != len(want[i]) {

@@ -47,6 +47,15 @@ type execution struct {
 	workers []*worker
 	mergers []merger
 	shared  *sharedGroups
+	// parts are the partitions that the groups of a hashed aggregation are
+	// merged into, 1<<partBits of them, made when a worker first has groups
+	// for one.
+	parts     []groupPartition
+	partBits  int
+	partsOnce sync.Once
+	// unstaged counts the workers that merged groups into the partitions
+	// while they scanned.
+	unstaged atomic.Int32
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
 	// rows is the number of rows the workers aggregated.
@@ -187,7 +196,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		}
 		hashedFor = err.Error()
 	}
-	x := &execution{q: q, workers: make([]*worker, n), ords: ords}
+	x := &execution{q: q, workers: make([]*worker, n), ords: ords, partBits: partitionBitsFor(n)}
 	if q.agg != nil && q.agg.group >= 0 {
 		a := mem.NewArena()
 		x.shared = &sharedGroups{arena: a, table: vec.NewByteTable(a)}
@@ -273,15 +282,21 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 func (x *execution) held() int64 {
 	n := 0
 	if x.shared != nil {
-		n += x.shared.arena.Size()
+		n += x.shared.arena.Size() + x.shared.table.Retained()
 	}
 	for _, w := range x.workers {
 		if w != nil {
 			n += w.arena.Size() + w.held() + w.sink.held()
+			if w.agg.table != nil {
+				n += w.agg.table.Retained()
+			}
 		}
 	}
 	for i := range x.mergers {
 		n += x.mergers[i].held()
+	}
+	for i := range x.parts {
+		n += x.parts[i].held()
 	}
 
 	return int64(n)
@@ -289,6 +304,7 @@ func (x *execution) held() int64 {
 
 func (x *execution) release() {
 	if x.shared != nil {
+		x.shared.table.Release()
 		x.shared.arena.Free()
 	}
 	for _, w := range x.workers {
@@ -296,8 +312,12 @@ func (x *execution) release() {
 			w.release()
 		}
 	}
+	for i := range x.parts {
+		x.parts[i].release()
+	}
 	for i := range x.mergers {
 		if m := &x.mergers[i]; m.arena != nil {
+			m.own.release()
 			m.arena.Free()
 			for c := range m.batch {
 				m.batch[c].keys = nil

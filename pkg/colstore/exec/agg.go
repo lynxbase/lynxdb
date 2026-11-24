@@ -9,16 +9,16 @@ import (
 )
 
 const (
-	// partitionBits splits spilled groups and distinct values into
-	// partitions that merge independently with a cache-sized table each.
+	// partitionBits splits distinct values into partitions that merge
+	// independently with a cache-sized set each.
 	partitionBits = 8
 	// maxCodes bounds the combinations of key codes a block may resolve
 	// through a table indexed by code.
 	maxCodes = 1 << 16
 )
 
-// maxTableGroups is the number of groups a worker's table holds before it is
-// spilled to the worker's log.
+// maxTableGroups is the number of groups a worker's table holds before the
+// worker hands them to the partitions that all workers share.
 var maxTableGroups = 1 << 16
 
 type partMode uint8
@@ -108,8 +108,8 @@ type aggScratch struct {
 	okeys [][]int64
 	ohas  [][]uint8
 
-	// The groups of a block that goes to the log without the table: the
-	// encoded keys or the rows they start at, their hashes, states and
+	// The groups of a block that goes to the partitions without the table:
+	// the encoded keys or the rows they start at, their hashes, states and
 	// shared ids.
 	lkeys   []byte
 	lends   []uint32
@@ -117,6 +117,10 @@ type aggScratch struct {
 	lhash   []uint64
 	lwords  []int64
 	lglobal []uint32
+	// lookup serves the merges of the worker's groups into the partitions,
+	// and busy lists the partitions that another worker held meanwhile.
+	lookup lookup
+	busy   []uint32
 }
 
 // empty truncates every buffer, so that held counts the ones a query fills.
@@ -136,7 +140,7 @@ func (s *aggScratch) empty() {
 func (s *aggScratch) held() int {
 	n := 4*(used(s.gid)+used(s.gid2)+used(s.idx2)+used(s.hist)+used(s.cache)+used(s.lends)+used(s.lrows)+used(s.lglobal)) +
 		2*(used(s.codes)+used(s.tmp)) + used(s.key) + used(s.rec) + used(s.lkeys) +
-		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords)+used(s.hashes))
+		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords)+used(s.hashes)) + s.lookup.held() + 4*cap(s.busy)
 	for i := range s.parts {
 		n += 8*used(s.parts[i].buf) + used(s.parts[i].vbuf)
 	}
@@ -173,9 +177,12 @@ type aggWorker struct {
 	// heap holds the states of variable size of the groups the worker has
 	// in memory.
 	heap stateHeap
-	// log holds the states of spilled groups and of blocks that bypassed
-	// the table; dlogs hold the values of each distinct count.
-	log   *vec.KeyPartitions
+	// staged holds the groups that wait to be merged into the partitions
+	// that all workers share, and order is the worker's turn among those
+	// that merged some while they scanned, from one.
+	staged *vec.KeyPartitions
+	order  int
+	// dlogs hold the values of each distinct count.
 	dlogs []*vec.KeyPartitions
 	// floats records which arguments read a float.
 	floats []bool
@@ -229,47 +236,18 @@ func (a *aggWorker) group(key []byte, h uint64) int {
 	return id
 }
 
-func (a *aggWorker) openLog() *vec.KeyPartitions {
-	if a.log == nil {
-		a.log = vec.NewKeyPartitions(a.w.arena, partitionBits)
-	}
-
-	return a.log
-}
-
-// spill moves the table's groups to the log.
+// spill hands the table's groups to the partitions that all workers share.
 func (a *aggWorker) spill() {
 	if a.groups == 0 || a.table == nil {
 		return
 	}
-	log := a.openLog()
 	for g := 0; g < a.groups; g++ {
-		a.s.rec = a.record(a.s.rec[:0], a.table.Key(g), a.words[g*a.stride:(g+1)*a.stride])
-		log.Add(a.table.KeyHash(g), a.s.rec)
+		a.stage(a.table.KeyHash(g), 0, false, a.table.Key(g), a.words[g*a.stride:(g+1)*a.stride])
 	}
 	// Every state the heap holds belonged to a group of the table.
 	a.heap.reset()
 	a.table.Clear()
 	a.words, a.global, a.groups = a.words[:0], a.global[:0], 0
-}
-
-// record appends what the log keeps of a group: its key, its words and its
-// states of variable size.
-func (a *aggWorker) record(dst, key []byte, words []int64) []byte {
-	dst = appendWords(append(dst, key...), words)
-	if len(a.plan.states) != 0 {
-		dst = a.plan.appendStates(dst, &a.heap, words)
-	}
-
-	return dst
-}
-
-func appendWords(dst []byte, words []int64) []byte {
-	for _, w := range words {
-		dst = binary.LittleEndian.AppendUint64(dst, uint64(w))
-	}
-
-	return dst
 }
 
 // block aggregates the n selected rows of the open block, the rows listed
@@ -742,8 +720,8 @@ func (a *aggWorker) histogram(n int, idx []uint32, domain int) {
 }
 
 // byRow aggregates a block whose keys rarely repeat: every run of rows with
-// one key becomes a group of the block, and the groups go to the log, which
-// leaves finding equal keys to the merge.
+// one key becomes a group of the block, and the groups go to the partitions
+// that all workers share, where equal keys meet.
 func (a *aggWorker) byRow(n int, idx []uint32) error {
 	s := a.s
 	s.lkeys, s.lends, s.lrows, s.lhash = s.lkeys[:0], s.lends[:0], s.lrows[:0], s.lhash[:0]
@@ -774,12 +752,23 @@ func (a *aggWorker) byRow(n int, idx []uint32) error {
 	if err := a.feed(&t, n, idx); err != nil {
 		return err
 	}
-	log := a.openLog()
+	// A group takes its key from where the block has it.
+	start := uint32(0)
 	for g := 0; g < groups; g++ {
 		state := s.lwords[g*a.stride : (g+1)*a.stride]
-		s.rec = a.record(s.rec[:0], a.localKey(p, inPlace, g), state)
-		log.Add(s.lhash[g], s.rec)
-		a.plan.releaseStates(&a.heap, state)
+		switch {
+		case !inPlace:
+			a.stage(s.lhash[g], 0, false, s.lkeys[start:s.lends[g]], state)
+			start = s.lends[g]
+		case p.col.Valid != nil && !p.col.Valid.Get(int(s.lrows[g])):
+			a.stage(s.lhash[g], p.absent, true, nil, state)
+		default:
+			r := s.lrows[g]
+			a.stage(s.lhash[g], bytesTag(p.kind), true, p.col.Data[p.col.Offsets[r]:p.col.Offsets[r+1]], state)
+		}
+		if len(a.plan.states) != 0 {
+			a.plan.releaseStates(&a.heap, state)
+		}
 	}
 
 	return nil

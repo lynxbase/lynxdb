@@ -90,19 +90,6 @@ func (ap *aggPlan) appendStates(dst []byte, h *stateHeap, words []int64) []byte 
 	return binary.LittleEndian.AppendUint32(dst, uint32(len(dst)-start))
 }
 
-// splitRecord returns the key, the words and the states of a spill record.
-func (ap *aggPlan) splitRecord(rec []byte) (key, words, tail []byte) {
-	end := len(rec)
-	if len(ap.states) != 0 {
-		end -= 4
-		n := int(binary.LittleEndian.Uint32(rec[end:]))
-		tail, end = rec[end-n:end], end-n
-	}
-	k := end - 8*len(ap.words)
-
-	return rec[:k], rec[k:end], tail
-}
-
 // releaseStates gives up the states of a group.
 func (ap *aggPlan) releaseStates(h *stateHeap, words []int64) {
 	for i := range ap.states {
