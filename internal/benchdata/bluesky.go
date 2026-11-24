@@ -54,6 +54,10 @@ type Generator struct {
 	// rare is a word that one post in rareIn ends with, when rareIn is set.
 	rare   string
 	rareIn uint64
+	// posts is the number of latest posts that likes, reposts and replies
+	// name, zero when each names a post of its own; made counts the posts
+	// written so far.
+	posts, made uint64
 }
 
 // batch is a commit of several records of one account, collection and
@@ -99,6 +103,32 @@ func (g *Generator) Rare(word string, oneIn int) *Generator {
 	g.rare, g.rareIn = word, uint64(max(oneIn, 1))
 
 	return g
+}
+
+// Posts makes the likes and reposts that follow name one of the latest pool
+// posts, the newer the likelier, and three posts in ten a reply to one of
+// them, so that many events name the same post as on the network; unless
+// set, every like names a post of its own and no post is a reply.
+func (g *Generator) Posts(pool int) *Generator {
+	g.posts = uint64(max(pool, 0))
+
+	return g
+}
+
+// appendPost appends the cid and uri members of a reference to one of the
+// latest posts, drawn anew at every call.
+func (g *Generator) appendPost(dst []byte) []byte {
+	f := g.uniform()
+	post := (g.made - uint64(f*f*f*float64(g.posts))) * 0x9e3779b97f4a7c15
+	poster := post >> 20 % g.users
+	dst = append(dst, `"cid":"bafyrei`...)
+	dst = g.id(dst, 52, post)
+	dst = append(dst, `","uri":"at://`...)
+	dst = g.appendDID(dst, poster)
+	dst = append(dst, `/app.bsky.feed.post/`...)
+	dst = appendTID(dst, int64(1732206349000167-post>>44), clock(poster, 2, 63))
+
+	return append(dst, '"')
 }
 
 func (g *Generator) next() uint64 {
@@ -368,7 +398,24 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 			dst = append(dst, `,"langs":["en"],"text":"`...)
 			dst = g.text(dst)
 			dst = append(dst, '"')
+			if g.posts > 0 {
+				g.made++
+				if g.next()%10 < 3 {
+					dst = append(dst, `,"reply":{"parent":{`...)
+					dst = g.appendPost(dst)
+					dst = append(dst, `},"root":{`...)
+					dst = g.appendPost(dst)
+					dst = append(dst, `}}`...)
+				}
+			}
 		case "app.bsky.feed.like", "app.bsky.feed.repost":
+			if g.posts > 0 {
+				dst = append(dst, `,"subject":{`...)
+				dst = g.appendPost(dst)
+				dst = append(dst, '}')
+
+				break
+			}
 			dst = append(dst, `,"subject":{"cid":"bafyrei`...)
 			dst = g.id(dst, 52, g.next())
 			poster := g.account()
