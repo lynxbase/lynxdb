@@ -40,9 +40,9 @@ Returns the most frequent values of one field among the events that hold it, wit
 |---|---|---|
 | `limit` | `10` | Values to return, at most 100 |
 | `index` | all indexes | Only this index |
-| `from` | | Start of the time range: relative (`-1h`) or absolute |
+| `from` | | Start of the time range, inclusive, in a form that [`from` of `POST /query`](./query.md#request-body) takes: `-1h`, `-1d@d`, `@d`, `2026-11-17T08:00:00Z` |
 | `since` | | Start of the time range as a span back from now (`1h`); `from` wins when both are set |
-| `to` | | End of the time range |
+| `to` | | End of the time range, exclusive, in the same forms as `from` |
 
 ```bash
 curl -s 'localhost:3100/api/v1/fields/level/values?limit=3'

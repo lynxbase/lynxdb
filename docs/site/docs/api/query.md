@@ -41,7 +41,16 @@ Before a query runs, the server writes the events ingested so far, so the query 
 
 Other fields are ignored.
 
-`from` and `to` take a relative time (`-15m`, `-1h`, `-7d`, `-2w`, with an optional snap such as `-1d@d` for the start of the day), `now`, or an absolute time (`2026-11-17T08:00:00Z`, `2026-11-17T08:00:00`, `2026-11-17 08:00:00`, `2026-11-17`). They narrow every scan of the query, those of its subsearches included; bounds the query sets itself (`source=main earliest=-1h`) still apply, and the narrower of the two wins. Without `from`, `to` or bounds in the query, the query reads all time.
+`from` and `to` take one of these forms:
+
+- `now`.
+- A relative time: a count of `s`, `m`, `h`, `d` or `w` back from now, such as `-15m`, `-1h`, `-7d` or `-2w`.
+- A snap, `@` and a unit, which truncates a relative time or now to the start of that unit in UTC; a week starts on Monday. `-1d@d` is the start of yesterday, `@d` the start of today, `@w` the start of this week.
+- An absolute time: `2026-11-17T08:00:00Z`, `2026-11-17T08:00:00.250+01:00`, `2026-11-17T08:00:00`, `2026-11-17 08:00:00`, `2026-11-17 08:00` or `2026-11-17`. A time without a zone is UTC.
+
+Any other value, such as `yesterday`, `1h30m` or `-1h@x`, answers `400 VALIDATION_ERROR` with a message that quotes the value and lists these forms.
+
+`from` and `to` narrow every scan of the query, those of its subsearches included; bounds the query sets itself (`source=main earliest=-1h`) still apply, and the narrower of the two wins. Without `from`, `to` or bounds in the query, the query reads all time.
 
 ### Event results
 
