@@ -38,13 +38,16 @@ type query struct {
 	agg        *aggPlan
 	// ordered is set when the aggregation can run in key order.
 	ordered *orderedPlan
-	// timeKeys is set when a block whose rows all pass the filter can count
-	// them from its rows by bucket of time, and cut when the filter limits
-	// the row time.
+	// timeKeys is set when a block can count its rows from its rows by
+	// bucket of time, and cut when the filter limits the row time. An
+	// aggregate with a time key counts so every block whose rows all pass
+	// the filter; one whose keys are all columns, or that has none, only
+	// the blocks that the time range of the filter cuts.
 	timeKeys []timeKey
 	cut      *timeCut
 	// timeGranule is what the buckets of time that count the rows must
-	// divide, the greatest divisor of the granules of the time keys.
+	// divide, the greatest divisor of the granules of the time keys; zero
+	// without a time key, when the narrowest buckets of a block count it.
 	timeGranule int64
 	// rowExprs are the columns of a plan without an aggregate.
 	rowExprs []*sexpr
@@ -173,9 +176,13 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			return nil, err
 		}
 		q.ordered = q.planOrdered(snap, scan.Filter)
-		if q.timeKeys = timeKeysOf(q); q.timeKeys != nil {
+		if keys := timeKeysOf(q); keys != nil {
 			if err := q.planTimeCut(scan.Filter); err != nil {
 				return nil, err
+			}
+			// Without a time key the records only serve a time range.
+			if q.timeGranule != 0 || q.cut != nil {
+				q.timeKeys = keys
 			}
 		}
 		q.names, q.final = q.agg.names, q.located

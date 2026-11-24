@@ -374,7 +374,9 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	w.blocks++
 	w.matched += int64(count)
-	if q.timeKeys != nil {
+	// Without a time key only the blocks that the range cuts are counted
+	// from their records: one inside the range has cheaper ways.
+	if q.timeKeys != nil && (cut || q.timeGranule != 0) {
 		if idx == nil && !cut {
 			_, why, err := w.agg.byTime(p, b.Index(), math.MinInt64, math.MaxInt64)
 			if err != nil {

@@ -46,31 +46,28 @@ type timeScratch struct {
 
 // timeKeysOf returns how the keys of the query's aggregate are computed
 // from the rows of blocks by bucket of time, or nil when they are not: the
-// aggregate counts rows by at least one function of the row time,
-// hour(_time) or bin(_time, width), and its other keys are columns.
+// aggregate counts rows, and each of its keys is a column or a function of
+// the row time, hour(_time) or bin(_time, width). It sets q.timeGranule
+// when a key is such a function.
 func timeKeysOf(q *query) []timeKey {
 	ap := q.agg
-	if ap == nil || !ap.rowsOnly || len(ap.keys) == 0 {
+	if ap == nil || !ap.rowsOnly {
 		return nil
 	}
 	isTime := func(e *sexpr) bool {
 		return e.op == OpColumn && e.kind == vec.KindInt && q.paths[e.path] == part.TimePath
 	}
 	keys := make([]timeKey, len(ap.keys))
-	timed := false
 	for k, e := range ap.keys {
 		switch {
 		case e.op == OpColumn && q.paths[e.path] != part.TimePath:
 		case e.op == OpHourOfDay && isTime(e.args[0]):
-			keys[k], timed = timeKey{op: OpHourOfDay, granule: hourNanos}, true
+			keys[k] = timeKey{op: OpHourOfDay, granule: hourNanos}
 		case e.op == OpBin && isTime(e.args[0]) && e.args[1].op == OpLiteral && e.args[1].lit.Kind == vec.KindInt && e.args[1].lit.Int > 0:
-			keys[k], timed = timeKey{op: OpBin, granule: e.args[1].lit.Int}, true
+			keys[k] = timeKey{op: OpBin, granule: e.args[1].lit.Int}
 		default:
 			return nil
 		}
-	}
-	if !timed {
-		return nil
 	}
 	for _, k := range keys {
 		if k.op != 0 {
@@ -187,7 +184,13 @@ func (x *execution) cutByTime(w *worker, p *part.Part, b *part.Block) (timeMiss,
 func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, timeMiss, error) {
 	s, ts := a.s, &a.s.time
 	var width int64
-	ts.counts, width = p.TimeCounts(i, a.w.q.timeGranule, ts.counts[:0])
+	if granule := a.w.q.timeGranule; granule != 0 {
+		ts.counts, width = p.TimeCounts(i, granule, ts.counts[:0])
+	} else {
+		// No key depends on the bucket: the narrowest leave the fewest rows
+		// in the buckets that the range cuts.
+		ts.counts, width = p.NarrowTimeCounts(i, ts.counts[:0])
+	}
 	if width == 0 {
 		return 0, missRecord, nil
 	}
@@ -249,7 +252,12 @@ func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, timeMiss,
 		rows += n
 		total += n
 	}
-	if rows > 0 {
+	switch {
+	case rows == 0:
+	case len(keys) == 0:
+		// An aggregate without keys has its one group from the start.
+		a.words[a.plan.rows] += int64(rows)
+	default:
 		a.addRows(a.timeKey(ts.prev), rows)
 	}
 	if a.groups > maxTableGroups {

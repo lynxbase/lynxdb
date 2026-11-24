@@ -59,6 +59,68 @@ func rowRange(n exec.Node) exec.Node {
 	return n
 }
 
+// A count of rows whose keys are columns, or that has no key, reads the
+// records of the blocks that a time range cuts, and answers as the times of
+// the rows do.
+func TestCountsUnderATimeRangeAnswerAsTheTimesOfTheRowsDo(t *testing.T) {
+	s := timeCountStore(t)
+	defer s.Close()
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	const (
+		some = iota // blocks that the range cuts are counted from their records
+		none        // no block is
+	)
+	day := func(d, h, m, sec int) time.Time { return time.Date(2024, 11, d, h, m, sec, 0, time.UTC) }
+	cases := []struct {
+		name, text string
+		byTime     int
+		from, to   time.Time
+	}{
+		{"every row of five minutes", `source=x | stats count() as count`, some, day(23, 5, 10, 0), day(23, 5, 15, 0)},
+		{"every row of a range off the minutes", `source=x | stats count() as count`, some, day(22, 3, 17, 31), day(23, 9, 0, 1)},
+		{"every row of a second", `source=x | stats count() as count`, some, day(23, 5, 10, 7), day(23, 5, 10, 8)},
+		{"five minutes by collection", `source=x | stats count() as count by commit.collection | sort commit.collection`, some, day(23, 5, 10, 0), day(23, 5, 15, 0)},
+		{"a day and a half by kind and operation", `source=x | stats count() as count by kind, commit.operation | sort kind, commit.operation`, some, day(22, 12, 0, 0), day(24, 0, 0, 0)},
+		{"an hour of the rows a filter passes", `source=x | where kind = 'commit' and commit.operation = 'create' | stats count() as count by commit.collection | sort commit.collection`, some, day(23, 9, 12, 7), day(23, 10, 12, 7)},
+		{"two counts of an hour", `source=x | stats count() as a, count() as b by commit.collection | sort commit.collection`, some, day(23, 9, 0, 0), day(23, 10, 0, 0)},
+		{"an hour by user", `source=x | stats count() as count by did | sort did | head 50`, none, day(23, 9, 0, 0), day(23, 10, 0, 0)},
+		{"an hour of a count and a sum", `source=x | stats count() as count, sum(time_us) as s by commit.collection | sort commit.collection`, none, day(23, 9, 0, 0), day(23, 10, 0, 0)},
+		{"every row by collection", `source=x | stats count() as count by commit.collection | sort commit.collection`, none, time.Time{}, time.Time{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan, err := pplPlan(c.text, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !c.from.IsZero() {
+				plan = within(plan, c.from, c.to)
+			}
+			want, err := exec.Run(context.Background(), snap, rowRange(plan), exec.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := exec.Run(context.Background(), snap, plan, exec.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g, w := rendered(got), rendered(want); g != w {
+				t.Fatalf("answer\n %s\nwant\n %s", g, w)
+			}
+			if want.Rows == 0 {
+				t.Fatal("the query has no rows")
+			}
+			if counted := got.Stats.CountedByTime; want.Stats.CountedByTime != 0 || (c.byTime == some) != (counted != 0) {
+				t.Fatalf("%d blocks counted by time, of the reference %d: %+v", counted, want.Stats.CountedByTime, got.Stats)
+			}
+			if got.Stats.RowsMatched != want.Stats.RowsMatched {
+				t.Fatalf("%d rows matched, the reference %d", got.Stats.RowsMatched, want.Stats.RowsMatched)
+			}
+		})
+	}
+}
+
 // A scan leaves out the blocks whose records hold no row in the time range
 // that cuts them, whatever the plan reads.
 func TestAScanLeavesOutBlocksWithoutRowsInTheRange(t *testing.T) {

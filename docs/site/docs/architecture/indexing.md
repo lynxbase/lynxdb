@@ -98,6 +98,14 @@ source=web | stats count() as n by span(_time, 1h) as hour | sort hour
 
 The executor needs a stored bucket width that divides the query's grouping interval. For example, a five-minute grouping can sum minute records. Additional grouping columns must have one value throughout the block or be absent throughout. Other predicates must pass the whole block for it to use the stored counts. When the request time range cuts a stored bucket, the executor can read row times at that boundary and still sum the buckets contained in the range. Ineligible blocks use ordinary row selection over the decoded columns.
 
+A request time range uses the same records without a grouping by time. The scan skips a block when no bucket that the range meets holds a row. A count of rows, alone or grouped by columns that hold one value throughout the block, sums the buckets of the block's narrowest record inside the range:
+
+```ppl
+source=web earliest='2026-03-01 12:00:00' latest='2026-03-01 12:05:00' | stats count() as n by service
+```
+
+A block has minute records while its rows span about a day or less, so blocks of an index that keeps many days in one partition and orders them by a sort key carry hour and day records only.
+
 ## How a query uses the structures
 
 Suppose `web` has a sort key of `[service, route]` and stores integer HTTP status codes. Send the query with a time range covering the incident.
