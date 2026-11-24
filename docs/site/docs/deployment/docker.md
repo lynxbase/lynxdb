@@ -108,7 +108,7 @@ services:
       LYNXDB_QUERY_MAX_CONCURRENT: "32"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "/usr/local/bin/lynxdb", "health", "--server", "http://localhost:3100"]
+      test: ["CMD", "/usr/local/bin/lynxdb", "status", "--server", "http://localhost:3100"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -121,7 +121,7 @@ volumes:
   lynxdb-data:
 ```
 
-The health check runs the `lynxdb` binary itself, since the image has no shell or `curl`. With TLS on, use `--server https://localhost:3100 --tls-skip-verify`.
+The health check runs `lynxdb status`, since the image has no shell or `curl`. The command exits non-zero when the server cannot be reached or is not healthy. With TLS on, use `--server https://localhost:3100 --tls-skip-verify`. With `--auth`, `status` needs an API key: set `LYNXDB_TOKEN` in the service's `environment` to a key with the `query` scope.
 
 ### Log shippers
 
