@@ -2,7 +2,6 @@ package part
 
 import (
 	"bytes"
-	"math"
 	"math/bits"
 	"sort"
 
@@ -19,7 +18,8 @@ type pathShare struct {
 
 // sharedBuf holds a column of a merge cursor's block that the output
 // shares: for every value, the code that the plan gives it and the number
-// of its string in source src of the plan.
+// of its string in source src of the plan, among the stored strings of a
+// dictionary or as the set numbered it.
 type sharedBuf struct {
 	plan          *sharedPlan
 	src           int32
@@ -73,10 +73,16 @@ func (m *merger) planShared() error {
 		for i := range c.shareOf {
 			c.shareOf[i] = -1
 		}
+		c.need = grow(c.need, len(p.paths))
+		clear(c.need)
+		c.needs = 0
 		c.firstBlock, c.endBlock = c.block, p.NumBlocks()
 		if m.hi != nil {
 			c.endBlock = c.firstBlock + sort.Search(c.endBlock-c.firstBlock, func(i int) bool { return bytes.Compare(p.firstKeys[c.firstBlock+i], m.hi) >= 0 })
 		}
+		// A merge of some of the blocks of a part needs the strings of the
+		// codes that those hold, which it reads for that.
+		whole := c.firstBlock == 0 && c.endBlock == p.NumBlocks()
 		for b := c.firstBlock; b < c.endBlock; b++ {
 			if err := p.OpenBlock(b, &m.last); err != nil {
 				return err
@@ -91,6 +97,11 @@ func (m *merger) planShared() error {
 				if ref.enc == encShared {
 					sh.sharedValues += uint64(ref.Count)
 					c.sharedVals[ref.PathID] += uint64(ref.Count)
+					if !whole {
+						if err := c.markNeeded(m, ref); err != nil {
+							return err
+						}
+					}
 				} else {
 					sh.ownBytes += uint64(ref.length)
 					sh.ownValues += uint64(ref.Count)
@@ -108,12 +119,35 @@ func (m *merger) planShared() error {
 		if sh.sharedValues == 0 && (sh.ownValues < minSharedValues || sh.ownBytes < minFlatBytes || sh.ownBytes < minFlatValue*sh.ownValues) {
 			continue
 		}
+		// A column that a merge found not worth sharing is looked at again
+		// once there is twice as much of it.
+		if tried := m.tried(sh.path); sh.sharedValues == 0 && sh.ownValues < 2*tried {
+			m.w.noteTried(sh.path, tried)
+
+			continue
+		}
 		if err := m.planPath(sh); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// tried returns the most values that the column at path had when a merge
+// that wrote one of the parts being merged found it not worth sharing.
+func (m *merger) tried(path string) uint64 {
+	most := uint64(0)
+	for _, c := range m.cursors {
+		if c.done || c.part.tried == nil {
+			continue
+		}
+		if id, ok := c.part.PathID(path); ok {
+			most = max(most, c.part.tried[id])
+		}
+	}
+
+	return most
 }
 
 // planPath plans the column at the path of sh, unless sharing it is not
@@ -132,7 +166,7 @@ func (m *merger) planPath(sh *pathShare) error {
 
 				return ErrCorrupt
 			}
-			sp.addSource(c.part, d, c.sharedVals[id])
+			sp.addSource(c.part, d, c.sharedVals[id], c.need[id])
 		}
 	}
 	ok := true
@@ -144,6 +178,9 @@ func (m *merger) planPath(sh *pathShare) error {
 		ok, err = sp.number()
 	}
 	if err != nil || !ok || !sp.worth(sh) {
+		if err == nil && !sp.starved {
+			m.w.noteTried(sh.path, sh.ownValues+sh.sharedValues)
+		}
 		sp.release()
 
 		return err
@@ -161,6 +198,34 @@ func (m *merger) planPath(sh *pathShare) error {
 	return nil
 }
 
+// markNeeded marks the codes that the block open in m.last holds in the
+// column of ref as ones whose strings the merge needs.
+func (c *mergeCursor) markNeeded(m *merger, ref *ColumnRef) error {
+	d, ok := c.part.Dictionary(ref.PathID)
+	if !ok {
+		return ErrCorrupt
+	}
+	need := c.need[ref.PathID]
+	if need == nil {
+		if c.needs == len(c.needBufs) {
+			c.needBufs = append(c.needBufs, nil)
+		}
+		need = grow(c.needBufs[c.needs], vec.BitmapWords(d.codes))
+		clear(need)
+		c.needBufs[c.needs], c.need[ref.PathID] = need, need
+		c.needs++
+	}
+	var err error
+	if m.shareCodes, err = m.last.DecodeShared(ref, &m.shareCol, m.shareCodes); err != nil {
+		return err
+	}
+	for _, code := range m.shareCodes {
+		need.Set(int(code))
+	}
+
+	return nil
+}
+
 // gather reads the strings that the blocks of the range store themselves at
 // the path of sh into the set of sp, and reports whether it did: not when
 // the first of them hardly repeat in a column that no part shares yet, nor
@@ -168,6 +233,14 @@ func (m *merger) planPath(sh *pathShare) error {
 func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 	set := valueSets.Get()
 	sp.set = set
+	// The numbers of all the values there are to read.
+	if !reserve(4 * int64(sh.ownValues)) {
+		sp.starved = true
+
+		return false, nil
+	}
+	sp.reserved += 4 * int64(sh.ownValues)
+	sp.numbers = grow(sp.numbers, int(sh.ownValues))[:0]
 	introduce := len(sp.srcs) == 0
 	col := &m.shareCol
 	for pass := 0; pass < 2; pass++ {
@@ -194,11 +267,13 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 				if err := m.last.DecodeValues(ref, col); err != nil {
 					return false, err
 				}
-				if !sp.take(c.src, b, col, ref.Count) {
+				if !sp.take(c.part, b, col, ref.Count) {
 					return false, nil
 				}
-				if grown := int64(set.retained()+4*cap(sp.numbers)) - sp.reserved; grown >= setStep {
+				if grown := int64(set.retained()) + 4*int64(sh.ownValues) - sp.reserved; grown >= setStep {
 					if !reserve(grown) {
+						sp.starved = true
+
 						return false, nil
 					}
 					sp.reserved += grown
@@ -208,6 +283,24 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 		if pass == 0 && introduce && set.added >= sharedTrialValues &&
 			((set.added-uint64(set.len()))*shareRepeats < set.added || set.len() <= maxCounted) {
 			return false, nil
+		}
+		if pass == 0 && introduce && set.len() > 0 {
+			// Strings of many lengths, or of more symbols than pack, are not
+			// worth reading the rest of.
+			length, _ := set.stride()
+			sp.stats.reset(length)
+			for number := 0; number < set.len(); number++ {
+				sp.stats.add(set.numbered(uint32(number)))
+			}
+			if !sp.layout.set(&sp.stats) {
+				return false, nil
+			}
+		}
+		if pass == 0 && set.len() > 0 {
+			// Room for the strings of the blocks left, of which there are
+			// fewer the more the values repeat; the set grows past it.
+			n := int(min(sh.ownValues, uint64(set.len())*setAhead))
+			set.reserve(n, n*(len(set.data)/set.len()+1))
 		}
 	}
 	if introduce && uint64(set.len())*sharedGain > sh.ownValues*(sharedGain-1) {
@@ -221,28 +314,18 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 // worth reports whether the dictionary of the plan and the codes of the
 // values that sh counts take less than the chunks that the blocks would
 // hold on their own, by one part in sharedGain when some of the blocks do
-// hold such chunks. The strings that the part will hold are not known
-// before its rows are: of a dictionary that the range reads a share of, it
-// takes as many as that share of the values would hold if each string had
-// as many values as any other, which is more than a skewed column holds.
+// hold such chunks. What the values that are codes already would take in
+// chunks of their own is what the writers of their parts took them to take,
+// by the share of the values of each part that the merge reads.
 func (sp *sharedPlan) worth(sh *pathShare) bool {
-	live, flat := 0.0, float64(sh.ownBytes)
-	if sp.set != nil {
-		live = float64(sp.set.len())
-	}
+	flat := float64(sh.ownBytes)
 	for i := range sp.srcs {
 		s := &sp.srcs[i]
-		share := min(1, float64(s.values)/float64(max(s.dict.values, 1)))
-		repeats := float64(s.dict.values) / float64(s.dict.stored)
-		live += float64(s.dict.stored) * (1 - math.Pow(1-share, repeats))
-		flat += float64(s.dict.flat) * share
+		flat += float64(s.dict.flat) * min(1, float64(s.values)/float64(max(s.dict.values, 1)))
 	}
-	codes := float64(sp.codes)
-	live = max(min(live, codes), 1)
-	values := sh.ownValues + sh.sharedValues
-	others, otherBytes := float64(sp.stats.others)*live/codes, float64(sp.stats.otherBytes)*live/codes
-	shared := float64(sp.layout.size(uint64(live), uint64(others), uint64(otherBytes), uint64(sp.codes))) +
-		float64(values)*float64(bits.Len(uint(sp.codes-1)))/8 + 4*float64(values/defaultBlockRows+1)
+	values, codes := sh.ownValues+sh.sharedValues, uint64(sp.codes)
+	shared := float64(sp.layout.size(codes, sp.stats.others, sp.stats.otherBytes, codes) +
+		values*uint64(bits.Len(uint(sp.codes-1)))/8 + 4*(values/defaultBlockRows+1))
 	sp.planned, sp.flat = values, uint64(flat)
 	if sh.ownValues == 0 {
 		return shared <= flat
@@ -277,7 +360,7 @@ func (c *mergeCursor) decodeShared(j int, sp *sharedPlan) (*sharedBuf, error) {
 	}
 	// The strings of the block were read into the set of the plan, which
 	// kept the number of each.
-	at, ok := sp.numbersAt[uint64(c.src)<<32|uint64(c.block)]
+	at, ok := sp.numbersAt[blockKey{c.part, c.block}]
 	if !ok || at+ref.Count > len(sp.numbers) {
 		return nil, errShared
 	}
@@ -291,14 +374,14 @@ func (c *mergeCursor) decodeShared(j int, sp *sharedPlan) (*sharedBuf, error) {
 	return sb, nil
 }
 
-// take adds the count values of col, the strings of block b of the part at
-// place src among those of the merge, decoded by value, to the set of the
-// plan and notes the number of each; it reports whether the set had room.
-func (sp *sharedPlan) take(src, b int, col *vec.Column, count int) bool {
+// take adds the count values of col, the strings of block b of the part
+// src, decoded by value, to the set of the plan and notes the number of
+// each; it reports whether the set had room.
+func (sp *sharedPlan) take(src *Part, b int, col *vec.Column, count int) bool {
 	if sp.numbersAt == nil {
-		sp.numbersAt = map[uint64]int{}
+		sp.numbersAt = map[blockKey]int{}
 	}
-	sp.numbersAt[uint64(src)<<32|uint64(b)] = len(sp.numbers)
+	sp.numbersAt[blockKey{src, b}] = len(sp.numbers)
 	set := sp.set
 	if col.Layout == vec.Flat {
 		for i := 0; i < count; i++ {

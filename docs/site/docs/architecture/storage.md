@@ -217,7 +217,7 @@ After the query returns, the directory printed by the first command contains `in
 
 `lynxdb indexes` or `GET /api/v1/indexes` shows each store's event count, part count, bytes and time range. `GET /api/v1/indexes/{index}` also shows the saved settings, `merges_running` and `runs_to_merge`. `GET /api/v1/stats` includes totals across indexes, including `filter_bytes` for the token-filter pages. The byte totals describe live parts. A directory can also contain temporary files, merged-away files pinned by readers, and files in `lost+found/`.
 
-Use `GET /api/v1/indexes/{index}/columns` to break down live bytes by tier, column and file region. The default report uses the footer and column directories. With `sections=true` it also reads chunk headers to attribute bytes to sections. A `path` parameter limits that section breakdown to selected paths. With `explain=<field>` the endpoint samples blocks of a string column, compares encoding forms and reports the choice without returning field values.
+Use `GET /api/v1/indexes/{index}/columns` to break down live bytes by tier, column and file region. The default report uses the footer and column directories. With `sections=true` it also reads chunk headers to attribute bytes to sections. A `path` parameter limits that section breakdown to selected paths. With `explain=<field>` the endpoint samples blocks of a string column, compares encoding forms and reports the choice without returning field values. A column that uses part dictionaries reports them under `dictionary`: the bytes are part of the column's `bytes`, and `flat_bytes_estimate` is what the writers expected the same values to take in per-block forms.
 
 ## Code entry points
 

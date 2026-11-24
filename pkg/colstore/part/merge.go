@@ -197,9 +197,10 @@ type merger struct {
 	// shares holds, by path, what the blocks of the range hold as strings,
 	// shareIdx where each path is in it, and shareCol the strings of a
 	// block read for a dictionary.
-	shares   []pathShare
-	shareIdx map[string]int32
-	shareCol vec.Column
+	shares     []pathShare
+	shareIdx   map[string]int32
+	shareCol   vec.Column
+	shareCodes []uint32
 }
 
 var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
@@ -216,7 +217,7 @@ var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
 		cursors: m.cursors[:0], tree: m.tree[:0], winners: m.winners[:0],
 		keyBuf: m.keyBuf[:0], times: m.times[:0], lastCols: m.lastCols,
 		counts: m.counts[:0], unsorted: m.unsorted[:0], space: m.space,
-		shares: m.shares[:0], shareIdx: m.shareIdx, shareCol: m.shareCol,
+		shares: m.shares[:0], shareIdx: m.shareIdx, shareCol: m.shareCol, shareCodes: m.shareCodes,
 	}
 
 	return true
@@ -290,6 +291,12 @@ type mergeCursor struct {
 	sharedVals           []uint64
 	plans                []*sharedPlan
 	planSrc              []int32
+	// need holds, by path of the part, the codes of its dictionary that the
+	// blocks to be merged hold, nil when the merge reads no codes of it or
+	// all blocks of the part; the bitmaps are the first needs of needBufs.
+	need     []vec.Bitmap
+	needBufs []vec.Bitmap
+	needs    int
 	// sbuf holds the codes of each column of the block that the output
 	// shares, nil for the others, taken from sbufs.
 	sbuf  []*sharedBuf
@@ -340,6 +347,13 @@ var cursorPool = mem.Pool[mergeCursor]{Reset: func(c *mergeCursor) bool {
 	clear(c.lazy)
 	clear(c.plans)
 	clear(c.sbuf)
+	clear(c.need)
+	for _, need := range c.needBufs {
+		retained += 8 * cap(need)
+	}
+	if retained > maxCursorBytes {
+		return false
+	}
 	for i := range c.sbufs {
 		c.sbufs[i].plan = nil
 	}

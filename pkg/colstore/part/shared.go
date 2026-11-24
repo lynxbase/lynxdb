@@ -55,6 +55,9 @@ const (
 	// setStep is the growth of a set of strings between two requests for
 	// memory.
 	setStep = 1 << 20
+	// setAhead is how many times the strings of the values looked at first
+	// a set makes room for at once.
+	setAhead = 4
 	// sharedSeen is the number of codes of a block remembered so that the
 	// tokens of a string are taken once.
 	sharedSeen = 1024
@@ -80,22 +83,24 @@ type sharedPlan struct {
 	// written as codes.
 	planned, flat, values uint64
 	// set holds the strings of the blocks that store them as they are, and
-	// setMap the code of each by its place when the plan has other sources.
-	set    *valueSet
-	setMap monotone
-	srcs   []planSource
+	// setCodes the code of each by its place when the plan has other
+	// sources.
+	set      *valueSet
+	setCodes codeMap
+	srcs     []planSource
 	// reserved is the memory of set and numbers taken from the budget.
 	reserved int64
 	// numbers holds, for the blocks that a merge read into set, the number
 	// in set of every value, block after block, and numbersAt where those
-	// of a block of a part begin, by the place of the part among the parts
-	// of the merge and the block's in it: a merge then writes the codes of
-	// such a block without reading its strings a second time.
+	// of a block begin: a merge then writes the codes of such a block
+	// without reading its strings a second time. starved is set when the
+	// merges under way left no memory for the set.
 	numbers   []uint32
-	numbersAt map[uint64]int
+	numbersAt map[blockKey]int
+	starved   bool
 	// block and local hold, for the values of the block being gathered, the
-	// code and the number of the string in its source, and from the sources
-	// of runs of them.
+	// code and the number of the string in its source, which for the set is
+	// the number it got there, and from the sources of runs of them.
 	block, local []uint32
 	from         []fromRun
 	seen         [sharedSeen]uint32
@@ -104,46 +109,120 @@ type sharedPlan struct {
 	last         []byte
 }
 
+// blockKey names a block of a part being merged.
+type blockKey struct {
+	part  *Part
+	block int
+}
+
 // planSource is the dictionary of a part being merged, with the code that
-// the plan gives each of its stored strings.
+// the plan gives each of its stored strings that the merge needs.
 type planSource struct {
 	part  *Part
 	dict  *Dictionary
-	remap monotone
+	codes codeMap
+	// need marks the codes of the dictionary that the blocks to be merged
+	// hold; nil when the merge reads every block of the part and so needs
+	// every string of it. needBuf is its memory, the plan's own: the plan
+	// outlives the merge that found the codes.
+	need, needBuf vec.Bitmap
 	// values counts the values that the blocks to be merged hold as codes
 	// of the dictionary.
 	values uint64
 }
 
+// codeMap holds the code that a plan gives each string of one of its
+// sources, by the number of the string in the source; the codes never
+// decrease with the numbers. It keeps them as they are, or a few bits of
+// each, where a string that the merge does not need has the code of the one
+// before it.
+type codeMap struct {
+	few    bool
+	dense  []uint32
+	wide   monotone
+	filled int
+	last   uint32
+}
+
+// fewCodes is the most strings of the sources of one plan whose codes are
+// kept as they are, 4 MiB of them, which are read at once; the bits kept of
+// the others are searched at every read.
+const fewCodes = 1 << 20
+
+// reset readies the map for the codes, below bound, of n strings: as they
+// are when few is set.
+func (m *codeMap) reset(n int, bound uint64, few bool) {
+	m.few, m.filled, m.last = few, 0, 0
+	if m.few {
+		m.dense = grow(m.dense, n)
+
+		return
+	}
+	m.wide.reset(n, bound)
+}
+
+// put notes the code of string i, which follows every string put before.
+func (m *codeMap) put(i int, code uint32) {
+	if m.few {
+		m.dense[i] = code
+
+		return
+	}
+	for ; m.filled < i; m.filled++ {
+		m.wide.append(m.last)
+	}
+	m.wide.append(code)
+	m.filled, m.last = i+1, code
+}
+
+// seal ends the puts of a source of n strings.
+func (m *codeMap) seal(n int) {
+	for ; !m.few && m.filled < n; m.filled++ {
+		m.wide.append(m.last)
+	}
+}
+
+func (m *codeMap) get(i int) uint32 {
+	if m.few {
+		return m.dense[i]
+	}
+
+	return m.wide.get(i)
+}
+
+func (m *codeMap) retained() int { return 4*cap(m.dense) + m.wide.retained() }
+
 // fromRun tells that the next n values of a block come from source src,
 // the set when src is the number of dictionaries.
 type fromRun struct{ src, n int32 }
 
-// planWalk walks the strings of one source of a plan in order: val is the
-// string it stands on, which buf holds when the source is a dictionary and
+// planWalk walks the strings of one source of a plan that the merge needs,
+// in order: pos is the number of the string it stands on in the source, at
+// the code of that string in a dictionary of which the merge needs a part,
+// and val the string, which buf holds when the source is a dictionary and
 // the set itself otherwise.
 type planWalk struct {
-	pos, n   int
-	val, buf []byte
-	code     uint32
+	pos, at, n int
+	val, buf   []byte
+	code       uint32
 }
 
 // maxPlanBytes bounds the buffers that a pooled plan keeps.
 const maxPlanBytes = 8 << 20
 
 var sharedPlans = mem.Pool[sharedPlan]{Reset: func(sp *sharedPlan) bool {
-	retained := 8*cap(sp.used) + 4*(cap(sp.block)+cap(sp.local)) + sp.setMap.retained()
+	retained := 8*cap(sp.used) + 4*(cap(sp.block)+cap(sp.local)) + sp.setCodes.retained()
 	srcs := sp.srcs[:cap(sp.srcs)]
 	for i := range srcs {
-		srcs[i].part, srcs[i].dict = nil, nil
-		retained += srcs[i].remap.retained()
+		srcs[i].part, srcs[i].dict, srcs[i].need = nil, nil, nil
+		retained += srcs[i].codes.retained() + 8*cap(srcs[i].needBuf)
 	}
 	for i := range sp.walk {
 		sp.walk[i].val = nil
 		retained += cap(sp.walk[i].buf)
 	}
 	sp.srcs, sp.set = sp.srcs[:0], nil
-	sp.merged, sp.tentative, sp.codes, sp.planned, sp.flat, sp.values = false, false, 0, 0, 0, 0
+	sp.merged, sp.tentative, sp.starved, sp.codes, sp.planned, sp.flat, sp.values = false, false, false, 0, 0, 0, 0
 	sp.block, sp.local, sp.from = sp.block[:0], sp.local[:0], sp.from[:0]
 	sp.numbers = sp.numbers[:0]
 	clear(sp.numbersAt)
@@ -175,15 +254,21 @@ func (sp *sharedPlan) source(p *Part) int32 {
 	return -1
 }
 
-// addSource makes the dictionary d of p a source of the plan.
-func (sp *sharedPlan) addSource(p *Part, d *Dictionary, values uint64) {
+// addSource makes the dictionary d of p a source of the plan: values of
+// the values to be merged are its codes, those that need marks, or any of
+// them when need is nil.
+func (sp *sharedPlan) addSource(p *Part, d *Dictionary, values uint64, need vec.Bitmap) {
 	if len(sp.srcs) < cap(sp.srcs) {
 		sp.srcs = sp.srcs[:len(sp.srcs)+1]
 	} else {
 		sp.srcs = append(sp.srcs, planSource{})
 	}
 	s := &sp.srcs[len(sp.srcs)-1]
-	s.part, s.dict, s.values = p, d, values
+	s.part, s.dict, s.values, s.need = p, d, values, nil
+	if need != nil {
+		s.needBuf = append(s.needBuf[:0], need...)
+		s.need = s.needBuf
+	}
 }
 
 // sources returns the number of sources, the set among them.
@@ -204,6 +289,15 @@ func (sp *sharedPlan) entries(i int) int {
 	return sp.set.len()
 }
 
+// codesOf returns the codes of the strings of source i.
+func (sp *sharedPlan) codesOf(i int) *codeMap {
+	if i < len(sp.srcs) {
+		return &sp.srcs[i].codes
+	}
+
+	return &sp.setCodes
+}
+
 // load makes the string at the place that walk i stands on its value.
 func (sp *sharedPlan) load(i int) error {
 	wk := &sp.walk[i]
@@ -219,9 +313,52 @@ func (sp *sharedPlan) load(i int) error {
 	return err
 }
 
-// sift restores the heap of walks below position at, ordered by less.
-func (sp *sharedPlan) sift(at int, less func(a, b int32) bool) {
+// step moves walk i to the next string of its source that the merge needs
+// and reports whether there is one.
+func (sp *sharedPlan) step(i int) (bool, error) {
+	wk := &sp.walk[i]
+	if i == len(sp.srcs) || sp.srcs[i].need == nil {
+		wk.pos++
+
+		return wk.pos < wk.n, nil
+	}
+	s := &sp.srcs[i]
+	if wk.at = nextSet(s.need, wk.at+1); wk.at < 0 {
+		return false, nil
+	}
+	var err error
+	wk.pos, err = s.dict.index(uint32(wk.at))
+
+	return err == nil, err
+}
+
+// nextSet returns the first bit of bm at or after from that is set, or -1.
+func nextSet(bm vec.Bitmap, from int) int {
+	for w := from >> 6; w < len(bm); w++ {
+		word := bm[w]
+		if w == from>>6 {
+			word &= ^uint64(0) << (uint(from) & 63)
+		}
+		if word != 0 {
+			return w<<6 + bits.TrailingZeros64(word)
+		}
+	}
+
+	return -1
+}
+
+// sift restores the heap of walks below position at: ordered by the codes
+// of the strings they stand on with byCode set, and by the strings
+// otherwise.
+func (sp *sharedPlan) sift(at int, byCode bool) {
 	h := sp.heap
+	less := func(a, b int32) bool {
+		if byCode {
+			return sp.walk[a].code < sp.walk[b].code
+		}
+
+		return bytes.Compare(sp.walk[a].val, sp.walk[b].val) < 0
+	}
 	for {
 		least, l := at, 2*at+1
 		if l < len(h) && less(h[l], h[least]) {
@@ -238,19 +375,62 @@ func (sp *sharedPlan) sift(at int, less func(a, b int32) bool) {
 	}
 }
 
-// startWalks puts a walk on the first string of every source.
-func (sp *sharedPlan) startWalks() {
+// startWalks puts a walk on the first string of every source that the merge
+// needs, with its code when coded is set and the string itself otherwise,
+// and makes a heap of them.
+func (sp *sharedPlan) startWalks(coded bool) error {
 	k := sp.sources()
 	for len(sp.walk) < k {
 		sp.walk = append(sp.walk, planWalk{})
 	}
 	sp.heap = sp.heap[:0]
 	for i := 0; i < k; i++ {
-		sp.walk[i].pos, sp.walk[i].n = 0, sp.entries(i)
-		if sp.walk[i].n > 0 {
+		sp.walk[i].pos, sp.walk[i].at, sp.walk[i].n = -1, -1, sp.entries(i)
+		ok, err := sp.advance(i, coded)
+		if err != nil {
+			return err
+		}
+		if ok {
 			sp.heap = append(sp.heap, int32(i))
 		}
 	}
+	for at := len(sp.heap)/2 - 1; at >= 0; at-- {
+		sp.sift(at, coded)
+	}
+
+	return nil
+}
+
+// advance moves walk i on and readies what orders it: the code of its
+// string with coded set and the string otherwise.
+func (sp *sharedPlan) advance(i int, coded bool) (bool, error) {
+	ok, err := sp.step(i)
+	if !ok || err != nil {
+		return false, err
+	}
+	if coded {
+		sp.walk[i].code = sp.codesOf(i).get(sp.walk[i].pos)
+
+		return true, nil
+	}
+
+	return true, sp.load(i)
+}
+
+// pop moves the walk at the top of the heap on, or takes it off the heap
+// when its source has no string left.
+func (sp *sharedPlan) pop(coded bool) error {
+	ok, err := sp.advance(int(sp.heap[0]), coded)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		sp.heap[0] = sp.heap[len(sp.heap)-1]
+		sp.heap = sp.heap[:len(sp.heap)-1]
+	}
+	sp.sift(0, coded)
+
+	return nil
 }
 
 // stride returns the length that most strings of the sources have.
@@ -274,9 +454,10 @@ func (sp *sharedPlan) stride() int {
 	return best
 }
 
-// number merges the strings of the sources in the order of their bytes and
-// gives each distinct one the next code, which it notes for every source
-// that holds the string. It reports whether the strings pack.
+// number merges the strings of the sources that the merge needs in the order
+// of their bytes and gives each distinct one the next code, which it notes
+// for every source that holds the string. It reports whether the strings
+// pack.
 func (sp *sharedPlan) number() (bool, error) {
 	k := sp.sources()
 	bound := uint64(0)
@@ -288,27 +469,24 @@ func (sp *sharedPlan) number() (bool, error) {
 	}
 	sp.stats.reset(sp.stride())
 	if len(sp.srcs) == 0 {
-		// The set alone: the code of a string is its place.
-		for place := 0; place < sp.set.len(); place++ {
-			sp.stats.add(sp.set.value(place))
+		// The set alone: the code of a string is its place. What packing
+		// takes does not depend on the order of the strings, and they lie
+		// side by side in the order they came in.
+		for number := 0; number < sp.set.len(); number++ {
+			sp.stats.add(sp.set.numbered(uint32(number)))
 		}
 		sp.codes = sp.set.len()
 	} else {
-		for i := range sp.srcs {
-			sp.srcs[i].remap.reset(sp.entries(i), bound)
-		}
-		if sp.set != nil {
-			sp.setMap.reset(sp.set.len(), bound)
-		}
-		sp.startWalks()
-		for _, i := range sp.heap {
-			if err := sp.load(int(i)); err != nil {
-				return false, err
+		few := fewCodes
+		for i := 0; i < k; i++ {
+			n := sp.entries(i)
+			sp.codesOf(i).reset(n, bound, n <= few)
+			if n <= few {
+				few -= n
 			}
 		}
-		less := func(a, b int32) bool { return bytes.Compare(sp.walk[a].val, sp.walk[b].val) < 0 }
-		for at := len(sp.heap)/2 - 1; at >= 0; at-- {
-			sp.sift(at, less)
+		if err := sp.startWalks(false); err != nil {
+			return false, err
 		}
 		code := -1
 		for len(sp.heap) > 0 {
@@ -319,20 +497,13 @@ func (sp *sharedPlan) number() (bool, error) {
 				sp.last = append(sp.last[:0], wk.val...)
 				sp.stats.add(wk.val)
 			}
-			if i < len(sp.srcs) {
-				sp.srcs[i].remap.append(uint32(code))
-			} else {
-				sp.setMap.append(uint32(code))
+			sp.codesOf(i).put(wk.pos, uint32(code))
+			if err := sp.pop(false); err != nil {
+				return false, err
 			}
-			if wk.pos++; wk.pos < wk.n {
-				if err := sp.load(i); err != nil {
-					return false, err
-				}
-			} else {
-				sp.heap[0] = sp.heap[len(sp.heap)-1]
-				sp.heap = sp.heap[:len(sp.heap)-1]
-			}
-			sp.sift(0, less)
+		}
+		for i := 0; i < k; i++ {
+			sp.codesOf(i).seal(sp.entries(i))
 		}
 		sp.codes = code + 1
 	}
@@ -347,14 +518,11 @@ func (sp *sharedPlan) number() (bool, error) {
 
 // codeOf returns the code of string number local of source src.
 func (sp *sharedPlan) codeOf(src int, local uint32) uint32 {
-	switch {
-	case src < len(sp.srcs):
-		return sp.srcs[src].remap.get(int(local))
-	case len(sp.srcs) == 0:
+	if len(sp.srcs) == 0 {
 		return local
 	}
 
-	return sp.setMap.get(int(local))
+	return sp.codesOf(src).get(int(local))
 }
 
 // eachUsed calls add with every string whose code a block used, in the
@@ -369,34 +537,24 @@ func (sp *sharedPlan) eachUsed(add func(val []byte)) error {
 
 		return nil
 	}
-	sp.startWalks()
-	for _, i := range sp.heap {
-		sp.walk[i].code = sp.codeOf(int(i), 0)
-	}
-	less := func(a, b int32) bool { return sp.walk[a].code < sp.walk[b].code }
-	for at := len(sp.heap)/2 - 1; at >= 0; at-- {
-		sp.sift(at, less)
+	if err := sp.startWalks(true); err != nil {
+		return err
 	}
 	last := -1
 	for len(sp.heap) > 0 {
 		i := int(sp.heap[0])
-		wk := &sp.walk[i]
-		if code := int(wk.code); code != last {
+		if code := int(sp.walk[i].code); code != last {
 			last = code
 			if sp.used.Get(code) {
 				if err := sp.load(i); err != nil {
 					return err
 				}
-				add(wk.val)
+				add(sp.walk[i].val)
 			}
 		}
-		if wk.pos++; wk.pos < wk.n {
-			wk.code = sp.codeOf(i, uint32(wk.pos))
-		} else {
-			sp.heap[0] = sp.heap[len(sp.heap)-1]
-			sp.heap = sp.heap[:len(sp.heap)-1]
+		if err := sp.pop(true); err != nil {
+			return err
 		}
-		sp.sift(0, less)
 	}
 
 	return nil
@@ -415,7 +573,7 @@ func (sp *sharedPlan) fromDict(src int32, codes, locals []uint32) error {
 			if err != nil {
 				return err
 			}
-			prev, prevLocal, prevCode = c, uint32(at), s.remap.get(at)
+			prev, prevLocal, prevCode = c, uint32(at), s.codes.get(at)
 		}
 		locals[i], codes[i] = prevLocal, prevCode
 	}
@@ -424,12 +582,11 @@ func (sp *sharedPlan) fromDict(src int32, codes, locals []uint32) error {
 }
 
 // fromNumbers puts in codes the codes of the strings of the set with the
-// numbers given, and their places in the set in locals.
+// numbers given, and the numbers in locals.
 func (sp *sharedPlan) fromNumbers(numbers, codes, locals []uint32) {
 	src := len(sp.srcs)
 	for i, number := range numbers {
-		place := sp.set.place(number)
-		locals[i], codes[i] = place, sp.codeOf(src, place)
+		locals[i], codes[i] = number, sp.codeOf(src, sp.set.place(number))
 	}
 }
 
@@ -631,6 +788,10 @@ func (w *Writer) shareColumn(path string, runs []valueRun, total int) {
 
 			return
 		}
+		if pass == 0 && set.len() > 0 {
+			n := min(total, set.len()*setAhead)
+			set.reserve(n, n*(len(set.data)/set.len()+1))
+		}
 	}
 	if set.len()*sharedGain > total*(sharedGain-1) {
 		reject()
@@ -742,7 +903,7 @@ func (w *Writer) tokenizeShared(c *shred.Column, sp *sharedPlan, codes []uint32)
 				continue
 			}
 			if int(run.src) == len(sp.srcs) {
-				w.tokenize(vec.KindString, sp.set.value(int(sp.local[i])))
+				w.tokenize(vec.KindString, sp.set.numbered(sp.local[i]))
 
 				continue
 			}
@@ -942,9 +1103,32 @@ func (w *Writer) writeDictionaries() []byte {
 		footer = binary.AppendUvarint(footer, uint64(len(sp.layout.head)))
 		footer = append(footer, sp.layout.head...)
 	}
+	// The columns that merges are to leave alone, in the order of their
+	// paths; one that no block of the part holds has no number.
+	var tried []string
+	for path := range w.tried {
+		if _, ok := w.ids[path]; ok && w.plans[path] == nil {
+			tried = append(tried, path)
+		}
+	}
+	sort.Slice(tried, func(a, b int) bool { return w.ids[tried[a]] < w.ids[tried[b]] })
+	footer = binary.AppendUvarint(footer, uint64(len(tried)))
+	for _, path := range tried {
+		footer = binary.AppendUvarint(footer, uint64(w.ids[path]))
+		footer = binary.AppendUvarint(footer, w.tried[path])
+	}
 	w.dictFooter = footer
 
 	return footer
+}
+
+// noteTried records that a merge found the column at path, of values values
+// in the parts it read, not worth sharing.
+func (w *Writer) noteTried(path string, values uint64) {
+	if w.tried == nil {
+		w.tried = map[string]uint64{}
+	}
+	w.tried[path] = max(w.tried[path], values)
 }
 
 // ownColumns returns the columns of b whose values the block holds itself:
@@ -965,10 +1149,11 @@ func (w *Writer) ownColumns(b *shred.Batch) []*shred.Column {
 	return w.own
 }
 
-// sharesAlike reports whether block i of src stores as codes the string
-// columns that w shares and no others, and w knows the dictionaries of src
-// that those codes are of: only then can the block be copied, its codes
-// replaced.
+// sharesAlike reports whether block i of src can be copied into a part that
+// shares columns: when w knows the dictionaries of src that the codes of the
+// block are of, and has read and numbered the strings that the block stores
+// itself of every column that w shares, so that the copy takes the codes of
+// w's dictionaries for both.
 func (w *Writer) sharesAlike(src *Part, i int) bool {
 	e := src.index[i*indexEntrySize:]
 	dir, err := src.directory(i, e)
@@ -985,8 +1170,14 @@ func (w *Writer) sharesAlike(src *Part, i int) bool {
 			continue
 		}
 		sp := w.sharedPlan(src.paths[id])
-		if shared := ent[5] == encShared; shared != (sp != nil) || (shared && sp.source(src) < 0) {
-			return false
+		if ent[5] == encShared {
+			if sp == nil || sp.source(src) < 0 {
+				return false
+			}
+		} else if sp != nil {
+			if _, numbered := sp.numbersAt[blockKey{src, i}]; !numbered {
+				return false
+			}
 		}
 	}
 
@@ -994,27 +1185,37 @@ func (w *Writer) sharesAlike(src *Part, i int) bool {
 }
 
 // recodedChunk is where the chunk of a directory entry of a copied block
-// lies in the copy.
+// lies in the copy; shared is set when the copy stores codes where the block
+// stored the strings.
 type recodedChunk struct {
 	at               int
 	off, length, crc uint32
+	shared           bool
 }
 
-// copyChunks makes w.block the chunks of a block of src, which data holds
-// and ents describes: as they are when the block shares no column, and
-// otherwise one by one in their order, the codes of the shared columns
-// replaced by those that the plans give their strings. It notes in
-// w.recoded where the chunks then lie.
-func (w *Writer) copyChunks(src *Part, data, ents []byte) error {
+// copyChunks makes w.block the chunks of block i of src, which data holds
+// and ents describes: as they are when w shares no column of the block, and
+// otherwise one by one in their order, those of the columns that w shares
+// replaced by the codes that the plans give their strings: the codes of the
+// dictionary of src turned into those of w's, and the strings that the block
+// stores itself into the codes of the numbers that the plan gave them when
+// it read them. It notes in w.recoded where the chunks then lie.
+func (w *Writer) copyChunks(src *Part, i int, data, ents []byte) error {
 	w.recoded = w.recoded[:0]
-	shared := false
-	for at := 0; at < len(ents); at += dirEntrySize {
-		shared = shared || ents[at+5] == encShared
+	recode := false
+	for at := 0; at < len(ents) && !recode; at += dirEntrySize {
+		id := binary.LittleEndian.Uint32(ents[at:])
+		recode = ents[at+5] == encShared || (w.planned > 0 && vec.Kind(ents[at+4]) == vec.KindString &&
+			uint64(id) < uint64(len(src.paths)) && w.plans[src.paths[id]] != nil)
 	}
-	if !shared {
+	if !recode {
 		w.block = append(w.block[:0], data...)
 
 		return nil
+	}
+	b := &w.copiedBlock
+	if err := src.OpenBlock(i, b); err != nil {
+		return err
 	}
 	w.block = w.block[:0]
 	order := w.order[:0]
@@ -1029,51 +1230,108 @@ func (w *Writer) copyChunks(src *Part, data, ents []byte) error {
 		e := ents[int(k)*dirEntrySize:]
 		id, count := binary.LittleEndian.Uint32(e), int(binary.LittleEndian.Uint32(e[8:]))
 		off, length, crc := binary.LittleEndian.Uint32(e[12:]), binary.LittleEndian.Uint32(e[16:]), binary.LittleEndian.Uint32(e[20:])
-		if uint64(off)+uint64(length) > uint64(len(data)) {
+		if uint64(off)+uint64(length) > uint64(len(data)) || uint64(id) >= uint64(len(src.paths)) {
 			return ErrCorrupt
 		}
 		chunk := data[off : off+length]
 		start := len(w.block)
-		if e[5] != encShared {
+		var sp *sharedPlan
+		if vec.Kind(e[4]) == vec.KindString {
+			sp = w.sharedPlan(src.paths[id])
+		}
+		if sp == nil {
+			if e[5] == encShared {
+				return ErrCorrupt
+			}
 			w.block = append(w.block, chunk...)
-			w.recoded = append(w.recoded, recodedChunk{int(k), uint32(start), length, crc})
+			w.recoded = append(w.recoded, recodedChunk{at: int(k), off: uint32(start), length: length, crc: crc})
 
 			continue
 		}
-		d, ok := src.Dictionary(id)
-		if !ok || crc32.Checksum(chunk, castagnoli) != crc {
+		// The bytes taken over get a checksum of the copy's own, so they
+		// are checked against the block's here.
+		ref, ok := b.Column(id, vec.KindString)
+		if !ok || ref.bad || count == 0 || count != ref.Count || !b.checked(ref, chunk) {
 			return ErrCorrupt
 		}
-		sp := w.sharedPlan(src.paths[id])
-		if sp == nil {
-			return ErrCorrupt
-		}
-		codes := chunk
+		rest := chunk
 		if e[6]&flagSparse != 0 {
 			if len(chunk) == 0 {
 				return ErrCorrupt
 			}
-			rest, _, ok := skipBlob(chunk[1:])
-			if !ok {
+			if rest, _, ok = skipBlob(chunk[1:]); !ok {
 				return ErrCorrupt
 			}
 			w.block = append(w.block, chunk[:len(chunk)-len(rest)]...)
-			codes = rest
 		}
-		if w.codes32, ok = readSharedCodes(w.codes32, codes, count, uint64(d.codes)); !ok || count == 0 {
-			return ErrCorrupt
-		}
-		w.locals32 = grow(w.locals32, count)
-		if err := sp.fromDict(sp.source(src), w.codes32, w.locals32); err != nil {
-			return err
+		w.codes32, w.locals32 = grow(w.codes32, count), grow(w.locals32, count)
+		if e[5] == encShared {
+			d, ok := src.Dictionary(id)
+			if !ok {
+				return ErrCorrupt
+			}
+			if w.codes32, ok = readSharedCodes(w.codes32, rest, count, uint64(d.codes)); !ok {
+				return ErrCorrupt
+			}
+			if err := sp.fromDict(sp.source(src), w.codes32, w.locals32); err != nil {
+				return err
+			}
+		} else {
+			at, ok := sp.numbersAt[blockKey{src, i}]
+			if !ok || at+count > len(sp.numbers) {
+				return errShared
+			}
+			sp.fromNumbers(sp.numbers[at:at+count], w.codes32, w.locals32)
 		}
 		w.block = appendSharedCodes(w.block, w.codes32, &w.e.tmp)
 		for _, code := range w.codes32 {
 			sp.used.Set(int(code))
 		}
 		sp.values += uint64(count)
-		w.recoded = append(w.recoded, recodedChunk{int(k), uint32(start), uint32(len(w.block) - start), crc32.Checksum(w.block[start:], castagnoli)})
+		w.recoded = append(w.recoded, recodedChunk{
+			at: int(k), off: uint32(start), length: uint32(len(w.block) - start),
+			crc: crc32.Checksum(w.block[start:], castagnoli), shared: e[5] != encShared,
+		})
 	}
 
 	return nil
+}
+
+// patchCopied makes the directory entries ents of a copied block, whose
+// statistics stats holds, describe the chunks as copyChunks laid them out,
+// and returns the statistics of the copy: those of the block but for the
+// entries whose strings became codes, which have none.
+func (w *Writer) patchCopied(ents, stats []byte) []byte {
+	converted := false
+	for _, rc := range w.recoded {
+		e := ents[rc.at*dirEntrySize:]
+		binary.LittleEndian.PutUint32(e[12:], rc.off)
+		binary.LittleEndian.PutUint32(e[16:], rc.length)
+		binary.LittleEndian.PutUint32(e[20:], rc.crc)
+		if rc.shared {
+			// The zero byte of the entry marks it until its turn below.
+			e[7], converted = 1, true
+		}
+	}
+	if !converted {
+		return stats
+	}
+	// What an entry holds among the statistics follows from its encoding,
+	// so each is copied before the entry takes the other.
+	w.stats = w.stats[:0]
+	for at := 0; at < len(ents); at += dirEntrySize {
+		e := ents[at:]
+		old := binary.LittleEndian.Uint32(e[24:])
+		binary.LittleEndian.PutUint32(e[24:], uint32(len(w.stats)))
+		if e[7] != 0 {
+			e[5], e[6], e[7] = encShared, e[6]&flagSparse, 0
+
+			continue
+		}
+		if n := statSize(stats, old, vec.Kind(e[4]), e[5]); n > 0 {
+			w.stats = append(w.stats, stats[old:int(old)+n]...)
+		}
+	}
+
+	return w.stats
 }

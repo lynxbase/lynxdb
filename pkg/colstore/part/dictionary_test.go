@@ -3,6 +3,7 @@ package part
 import (
 	"bytes"
 	"errors"
+	"math/bits"
 	"math/rand"
 	"testing"
 
@@ -94,5 +95,75 @@ func TestDictionaryOfStringsThatDoNotPack(t *testing.T) {
 	checkDocs(t, p, docs)
 	if shared, _ := sharedBlocks(t, p, "v"); shared != 0 {
 		t.Fatalf("%d blocks share a column whose strings do not pack", shared)
+	}
+}
+
+// pagesRead counts the pages of d that were read, and so checked, since the
+// last Recheck.
+func pagesRead(d *Dictionary) int {
+	n := 0
+	for i := range d.sound {
+		n += bits.OnesCount64(d.sound[i].Load())
+	}
+
+	return n
+}
+
+func TestALookupReadsFewPagesOfADictionary(t *testing.T) {
+	docs := accountDocs(60000, 40000, 0, 0)
+	p := plannedPart(t, docs, 8192, Options{})
+	id, _ := p.PathID("did")
+	d, ok := p.Dictionary(id)
+	if !ok {
+		t.Fatal("no dictionary")
+	}
+	pages := int((d.dataLen + dictPage - 1) / dictPage)
+	if pages < 64 {
+		t.Fatalf("a dictionary of %d pages is too small to tell a lookup from a scan", pages)
+	}
+	var b Block
+	var col vec.Column
+	if err := p.OpenBlock(3, &b); err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := b.Column(id, vec.KindString)
+	if err := b.Decode(ref, &col); err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Clone(col.Bytes(77))
+
+	// The code of one string: a page for every halving of the dictionary
+	// at most.
+	p.Recheck()
+	if _, found, err := d.Find(want); err != nil || !found {
+		t.Fatalf("Find: %v, %v", found, err)
+	}
+	if got, most := pagesRead(d), bits.Len(uint(d.Entries()))+1; got > most {
+		t.Fatalf("a search of %d strings read %d of %d pages, want at most %d", d.Entries(), got, pages, most)
+	}
+	// The rows of one block that hold the string, and the strings of a few
+	// rows: the pages of those strings.
+	p.Recheck()
+	rows, searched, err := b.FindEqual(ref, want, nil)
+	if err != nil || !searched || len(rows) == 0 {
+		t.Fatalf("FindEqual: %v, %v, %v", rows, searched, err)
+	}
+	picked := []uint32{5, 77, 4000, 8191}
+	if err := b.DecodeRows(ref, picked, &col); err != nil {
+		t.Fatal(err)
+	}
+	if string(col.Bytes(77)) != string(want) {
+		t.Fatalf("row 77 read alone is %q, want %q", col.Bytes(77), want)
+	}
+	if got, most := pagesRead(d), bits.Len(uint(d.Entries()))+1+2*len(picked); got > most {
+		t.Fatalf("a search and %d rows read %d of %d pages, want at most %d", len(picked), got, pages, most)
+	}
+	// A whole block reads strings from all over the dictionary.
+	p.Recheck()
+	if err := b.Decode(ref, &col); err != nil {
+		t.Fatal(err)
+	}
+	if got := pagesRead(d); got < pages/2 {
+		t.Fatalf("a whole block read %d of %d pages; the test expects it to read most", got, pages)
 	}
 }

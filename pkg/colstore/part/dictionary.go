@@ -31,6 +31,10 @@ import (
 //	            before every liveBlock codes, 32 bits each
 //	checksums   the checksum of every dictPage bytes of the sections above
 //
+// After the dictionaries the footer lists the columns that a merge found
+// not worth one, each with the number of values it then had: merges leave
+// such a column alone until they read twice as many values of it.
+//
 // The footer holds, for every dictionary, its path, the numbers of its codes
 // and of its stored strings, the values of its column in the part, what
 // they would take in the forms of single blocks, where its sections lie,
@@ -151,6 +155,20 @@ func (p *Part) readDictionaries(r *reader, limit uint64) bool {
 		d.sound = make([]atomic.Uint64, (d.dataLen+dictPage-1)/dictPage/64+1)
 		d.bind(p.data)
 		p.dicts[id] = d
+	}
+	n = r.uvarint()
+	if r.bad || n > uint64(len(p.paths)) {
+		return false
+	}
+	for ; n > 0; n-- {
+		id, values := r.uvarint(), r.uvarint()
+		if r.bad || id >= uint64(len(p.paths)) {
+			return false
+		}
+		if p.tried == nil {
+			p.tried = map[uint32]uint64{}
+		}
+		p.tried[uint32(id)] = values
 	}
 
 	return !r.bad
@@ -396,20 +414,26 @@ func (d *Dictionary) Find(value []byte) (code uint32, ok bool, err error) {
 }
 
 // entryStats gathers, over the strings of a dictionary, what packing those
-// of one length takes: the bytes each position holds and how often every
-// byte occurs.
+// of one length takes: the least and the greatest byte at each position,
+// eight positions to a word, and how often every byte occurs, in four tables
+// that take turns so that equal neighbours do not wait on each other.
 type entryStats struct {
-	stride int
-	first  []byte
-	lo, hi []byte
-	hist   [256]uint64
+	stride  int
+	first   []byte
+	lo, hi  []byte
+	loWords []uint64
+	hiWords []uint64
+	hists   [4][256]uint64
 	// packed counts the strings of the length, others and otherBytes the
 	// strings of other lengths and their bytes.
 	packed, others, otherBytes uint64
 }
 
 func (s *entryStats) reset(stride int) {
-	*s = entryStats{stride: stride, first: s.first[:0], lo: growBytes(s.lo, stride), hi: growBytes(s.hi, stride)}
+	*s = entryStats{
+		stride: stride, first: s.first[:0], lo: growBytes(s.lo, stride), hi: growBytes(s.hi, stride),
+		loWords: growWords(s.loWords, stride/8), hiWords: growWords(s.hiWords, stride/8),
+	}
 }
 
 func (s *entryStats) add(val []byte) {
@@ -419,17 +443,54 @@ func (s *entryStats) add(val []byte) {
 
 		return
 	}
+	loW, hiW := s.loWords, s.hiWords
+	tail := 8 * len(loW)
 	if s.packed == 0 {
 		s.first = append(s.first[:0], val...)
-		copy(s.lo, val)
-		copy(s.hi, val)
+		for w := range loW {
+			loW[w] = binary.LittleEndian.Uint64(val[8*w:])
+			hiW[w] = loW[w]
+		}
+		copy(s.lo[tail:], val[tail:])
+		copy(s.hi[tail:], val[tail:])
+	}
+	for w := range loW {
+		x := binary.LittleEndian.Uint64(val[8*w:])
+		below := (lessBytes(x, loW[w]) >> 7) * 0xFF
+		above := (lessBytes(hiW[w], x) >> 7) * 0xFF
+		loW[w] = x&below | loW[w]&^below
+		hiW[w] = x&above | hiW[w]&^above
 	}
 	lo, hi := s.lo[:len(val)], s.hi[:len(val)]
-	for p, c := range val {
-		lo[p], hi[p] = min(lo[p], c), max(hi[p], c)
-		s.hist[c]++
+	for p := tail; p < len(val); p++ {
+		lo[p], hi[p] = min(lo[p], val[p]), max(hi[p], val[p])
+	}
+	i := 0
+	for ; i+4 <= len(val); i += 4 {
+		b := val[i : i+4 : i+4]
+		s.hists[0][b[0]]++
+		s.hists[1][b[1]]++
+		s.hists[2][b[2]]++
+		s.hists[3][b[3]]++
+	}
+	for ; i < len(val); i++ {
+		s.hists[0][val[i]]++
 	}
 	s.packed++
+}
+
+// sums spells the least and the greatest bytes out into lo and hi and
+// returns how often every byte occurs.
+func (s *entryStats) sums() (hist [256]uint64) {
+	for w := range s.loWords {
+		binary.LittleEndian.PutUint64(s.lo[8*w:], s.loWords[w])
+		binary.LittleEndian.PutUint64(s.hi[8*w:], s.hiWords[w])
+	}
+	for c := range hist {
+		hist[c] = s.hists[0][c] + s.hists[1][c] + s.hists[2][c] + s.hists[3][c]
+	}
+
+	return hist
 }
 
 // packLayout is how the strings of one length of a dictionary are packed:
@@ -450,7 +511,7 @@ func (l *packLayout) set(s *entryStats) bool {
 	if s.packed == 0 || s.stride > maxDictStride || s.others > s.packed/maxDictOthers+16 {
 		return false
 	}
-	hist := s.hist
+	hist := s.sums()
 	for p, c := range s.first {
 		if s.lo[p] == s.hi[p] {
 			hist[c] -= s.packed

@@ -41,6 +41,9 @@ type Part struct {
 	// is the bytes that the footer spends on them.
 	dicts      []*Dictionary
 	dictFooter int
+	// tried holds, by path id, the values of the columns that a merge found
+	// not worth a dictionary when it wrote the part.
+	tried map[uint32]uint64
 	// sound has a bit for every column of every block, at the place of its
 	// directory entry, that is set once the bytes of the column were seen
 	// to match their checksum, until Recheck clears it; advised has one

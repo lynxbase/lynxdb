@@ -122,6 +122,11 @@ type Writer struct {
 	shareSkip map[string]uint8
 	shareSeen map[string]struct{}
 	shareRuns []valueRun
+	// tried holds, by path, the values of a column that a merge found not
+	// worth sharing, or did not look at again since a merge before it had:
+	// the part says so, and merges leave the column alone until it holds
+	// twice as many.
+	tried map[string]uint64
 
 	blobs  blobCodec // every section but the values of flat columns
 	values blobCodec
@@ -292,6 +297,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.w, w.opts, w.off, w.err, w.copied = out, opts, 0, nil, 0
 	w.dropPlans()
 	w.dry = false
+	clear(w.tried)
 	clear(w.trials)
 	w.paths = w.paths[:0]
 	clear(w.ids)
@@ -648,19 +654,14 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	}
 	entries := size + int(n)*dirEntrySize
 
-	if err := w.copyChunks(src, data, dir[size:entries]); err != nil {
+	if err := w.copyChunks(src, i, data, dir[size:entries]); err != nil {
 		return err
 	}
 	newDir := len(w.block)
 	w.block = append(w.block, dir[:entries]...)
 	// Path ids are per part, and entries stay ordered by id and kind.
 	ents := w.block[newDir+size:]
-	for _, rc := range w.recoded {
-		e := ents[rc.at*dirEntrySize:]
-		binary.LittleEndian.PutUint32(e[12:], rc.off)
-		binary.LittleEndian.PutUint32(e[16:], rc.length)
-		binary.LittleEndian.PutUint32(e[20:], rc.crc)
-	}
+	stats := w.patchCopied(ents, dir[entries:])
 	sorted, prev := true, uint64(0)
 	for at := 0; at < len(ents); at += dirEntrySize {
 		id := binary.LittleEndian.Uint32(ents[at:])
@@ -679,7 +680,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 		w.e.tmp = sortEntries(w.e.tmp[:0], ents)
 		copy(ents, w.e.tmp)
 	}
-	w.block = append(w.block, dir[entries:]...)
+	w.block = append(w.block, stats...)
 	if err := w.sumCopied(src, i, pathMap); err != nil {
 		return err
 	}

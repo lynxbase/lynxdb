@@ -306,3 +306,141 @@ func TestMergeIntoAWriterThatDoesNotPack(t *testing.T) {
 		t.Fatal("a writer that does not pack shares a column")
 	}
 }
+
+func TestPlanOutlivesItsMerge(t *testing.T) {
+	opts := Options{Ordered: true, SortKey: sharedKey}
+	var srcs, others []*Part
+	for i := range 3 {
+		srcs = append(srcs, plannedPart(t, keyedDocs(int64(i+1), 12000, 400, 1200), 2048, opts))
+		others = append(others, plannedPart(t, keyedDocs(int64(i+11), 12000, 400, 900), 2048, opts))
+	}
+	lo, hi := AppendKeyString(nil, []byte("key0100")), AppendKeyString(nil, []byte("key0250"))
+	want := mergeKeyRange(t, srcs, opts, 4096, lo, hi)
+	// The writer is closed after other merges took the buffers of its
+	// merge, which it must not read then.
+	var buf bytes.Buffer
+	w := NewWriter(&buf, opts)
+	if err := MergeRange(w, srcs, 4096, lo, hi); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		mergeKeyRange(t, others, opts, 4096, AppendKeyString(nil, []byte("key0050")), AppendKeyString(nil, []byte("key0300")))
+		mergeKeyRange(t, append(others[:1:1], srcs[2]), opts, 4096, nil, hi)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := readAll(t, want)
+	holdRows(t, []*Part{got}, rows)
+	checkDictionary(t, got, "did")
+	if !bytes.Equal(got.data, want.data) {
+		t.Fatal("the part closed after other merges differs from the one closed at once")
+	}
+}
+
+func TestCopiedBlocksTakeCodesForTheStringsTheyStored(t *testing.T) {
+	opts := Options{Ordered: true, SortKey: sharedKey}
+	// Parts whose keys follow one another, each with too few second
+	// accounts to share them, and with a column of one value a block.
+	var srcs []*Part
+	var docs [][]string
+	for i := range 4 {
+		d := keyedDocs(int64(i+1), 12000, 400, 1200)
+		for j := range d {
+			d[j] = strings.Replace(d[j], `"k":"key`, fmt.Sprintf(`"k":"part%d-key`, i), 1)
+		}
+		docs = append(docs, d)
+		p := plannedPart(t, d, 2048, opts)
+		if shared, own := sharedBlocks(t, p, "other"); shared != 0 || own == 0 {
+			t.Fatalf("part %d stores the second account as codes in %d blocks and otherwise in %d", i, shared, own)
+		}
+		srcs = append(srcs, p)
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, opts)
+	if err := Merge(w, srcs, 2048); err != nil {
+		t.Fatal(err)
+	}
+	copied := w.copied
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied < merged.NumBlocks()/2 {
+		t.Fatalf("%d of %d blocks were copied; the test expects most", copied, merged.NumBlocks())
+	}
+	holdRows(t, []*Part{merged}, docs...)
+	for _, path := range []string{"did", "other"} {
+		if shared, own := sharedBlocks(t, merged, path); shared == 0 || own != 0 {
+			t.Fatalf("the merged part stores %s as codes in %d blocks and otherwise in %d", path, shared, own)
+		}
+		checkDictionary(t, merged, path)
+	}
+	// The directories of the copied blocks hold nothing of the forms that
+	// the columns had.
+	var u Usage
+	if err := merged.AddUsage(&u, anyPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"directories.unaccounted", "blocks.unaccounted", "footer.unparsed"} {
+		if u.Regions[name] != 0 {
+			t.Errorf("region %s holds %d bytes", name, u.Regions[name])
+		}
+	}
+	// A merge of the merged part reads the copies.
+	again := mergeKeyRange(t, []*Part{merged}, opts, 4096, nil, nil)
+	holdRows(t, []*Part{again}, docs...)
+}
+
+func TestMergeLeavesAColumnAloneThatWasNotWorthSharing(t *testing.T) {
+	opts := Options{Ordered: true, SortKey: sharedKey}
+	// A tenth of the accounts repeat: more than the merge takes for none,
+	// and fewer than a dictionary needs to pay.
+	docs := func(seed int64) []string {
+		r := rand.New(rand.NewSource(seed))
+		out := make([]string, 9000)
+		for i := range out {
+			n := int(seed)*1_000_000 + i
+			if r.Intn(10) == 0 {
+				n = r.Intn(400)
+			}
+			out[i] = fmt.Sprintf(`{"k":"key%04d","id":"%s"}`, r.Intn(300), account(n))
+		}
+
+		return out
+	}
+	var srcs []*Part
+	for i := range 3 {
+		srcs = append(srcs, plannedPart(t, docs(int64(i+1)), 2048, opts))
+	}
+	merged := mergeKeyRange(t, srcs, opts, 4096, nil, nil)
+	id, _ := merged.PathID("id")
+	if shared, _ := sharedBlocks(t, merged, "id"); shared != 0 {
+		t.Fatal("the merge shares a column of which a tenth repeats")
+	}
+	if merged.tried[id] != 27000 {
+		t.Fatalf("the part says the column was tried at %d values, want 27000", merged.tried[id])
+	}
+	// A merge with as much again reads no string of the column to find out
+	// the same, and one with more than twice as much looks again.
+	more := plannedPart(t, docs(7), 2048, opts)
+	again := mergeKeyRange(t, []*Part{merged, more}, opts, 4096, nil, nil)
+	if id, _ := again.PathID("id"); again.tried[id] != 27000 {
+		t.Fatalf("the second part says the column was tried at %d values, want 27000", again.tried[id])
+	}
+	var most []*Part
+	for i := range 4 {
+		most = append(most, plannedPart(t, docs(int64(i+11)), 2048, opts))
+	}
+	third := mergeKeyRange(t, append(most, again), opts, 4096, nil, nil)
+	if id, _ := third.PathID("id"); third.tried[id] != 72000 {
+		t.Fatalf("the third part says the column was tried at %d values, want 72000", third.tried[id])
+	}
+}
