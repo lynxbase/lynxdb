@@ -50,6 +50,9 @@ type columnExplain struct {
 	Forms   []explainForm  `json:"forms"`
 	Timed   explainTimed   `json:"timed"`
 	Lost    []explainCount `json:"lost"`
+	// Dictionary sums the part dictionaries of the column, which the blocks
+	// stored as shared hold codes of.
+	Dictionary *usageDictionary `json:"dictionary,omitempty"`
 }
 
 // handleExplainColumn re-encodes a sample of the blocks of one string column
@@ -81,6 +84,7 @@ func (s *Server) handleExplainColumn(w http.ResponseWriter, r *http.Request, ind
 	out := columnExplain{
 		Index: index, Path: path, Blocks: e.Blocks, Values: e.Values, Repeats: e.Repeats,
 		Stored: explainForms(e.Stored, nil), Forms: explainForms(e.Forms, e.Smallest), Lost: explainCounts(e.Lost),
+		Dictionary: usageDictionaryOf(e.Dictionary),
 	}
 	t := &e.Timed
 	out.Timed = explainTimed{

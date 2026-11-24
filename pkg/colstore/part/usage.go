@@ -7,8 +7,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// Usage tells where the bytes of parts go; its columns and Regions add up to
-// Bytes.
+// Usage tells where the bytes of parts go; its columns, with their
+// dictionaries, and Regions add up to Bytes.
 type Usage struct {
 	Parts, Blocks    int
 	Rows, InputBytes uint64
@@ -39,6 +39,40 @@ type ColumnUsage struct {
 	// Sections holds the sections of the chunks by what they hold and how
 	// they hold it; their bytes add up to ChunkBytes.
 	Sections map[string]*Amount
+	// Dictionary sums the part dictionaries of the column, whose bytes it
+	// takes beside its chunks; nil when no part has one for it.
+	Dictionary *DictionaryUsage
+}
+
+// DictionaryUsage sums the part dictionaries of one column.
+type DictionaryUsage struct {
+	Parts int
+	// Codes counts the codes, Entries those that have a string, Exceptions
+	// the strings kept as they are, and Values the values that blocks store
+	// as codes.
+	Codes, Entries, Exceptions, Values uint64
+	// Bytes is what the dictionaries take: the slots of the packed strings,
+	// the strings kept as they are, the bits that tell which codes have a
+	// string, and the checksums of their pages.
+	Bytes, SlotBytes, ExceptionBytes, LiveBytes, ChecksumBytes int64
+	// FlatBytes is what the writers took the values stored as codes to take
+	// in the forms of single blocks, an estimate.
+	FlatBytes uint64
+}
+
+// add adds the dictionary d to u.
+func (u *DictionaryUsage) add(d *Dictionary) {
+	u.Parts++
+	u.Codes += uint64(d.codes)
+	u.Entries += uint64(d.stored)
+	u.Exceptions += uint64(d.exceptions)
+	u.Values += d.values
+	u.Bytes += int64(d.size)
+	u.SlotBytes += int64(d.slotsLen)
+	u.ExceptionBytes += int64(d.exceptLen)
+	u.LiveBytes += int64(d.liveLen)
+	u.ChecksumBytes += int64(d.size - d.dataLen)
+	u.FlatBytes += d.flat
 }
 
 // Amount is a share of a column, whose Values are a dictionary's entries for
@@ -52,7 +86,10 @@ type Amount struct {
 }
 
 var (
-	encodingNames = [...]string{encNone: "presence", encConst: "const", encFlat: "flat", encDict: "dict", encTime: "time", encTimed: "timed"}
+	encodingNames = [...]string{
+		encNone: "presence", encConst: "const", encFlat: "flat", encDict: "dict", encTime: "time", encTimed: "timed", encShared: "shared",
+	}
+	sharedNames   = [...]string{sharedPacked: "shared.codes.packed", sharedRuns: "shared.codes.runs"}
 	blobNames     = [...]string{blobStored: "stored", blobZstd: "zstd", blobLZ4: "lz4", blobPacked: "packed"}
 	presenceNames = [...]string{presenceBitmap: "bitmap", presenceList: "list", presenceHoles: "holes"}
 	codesNames    = [...]string{codesPacked: "dict.codes.packed", codesRuns: "dict.codes.runs"}
@@ -147,6 +184,17 @@ func (p *Part) AddUsage(u *Usage, sections func(path string) bool) error {
 		if rest := int64(size) - chunks; rest != 0 {
 			u.Regions["blocks.unaccounted"] += rest
 		}
+	}
+	for id, d := range p.dicts {
+		if d == nil {
+			continue
+		}
+		c := column(uint32(id), vec.KindString)
+		if c.Dictionary == nil {
+			c.Dictionary = &DictionaryUsage{}
+		}
+		c.Dictionary.add(d)
+		placed += int64(d.size)
 	}
 	for g := range p.groups {
 		grp := &p.groups[g]
@@ -260,10 +308,12 @@ func (p *Part) addFooter(u *Usage) int {
 	if r.bad {
 		u.Regions["footer.unparsed"] += int64(mark)
 	} else {
-		// The rows of the blocks by time close the footer.
+		// The rows of the blocks by time and the dictionaries close the
+		// footer.
 		times := len(p.timeCounts) + len(binary.AppendUvarint(nil, uint64(len(p.timeCounts))))
-		u.Regions["footer.counted_values"] += int64(mark - times)
+		u.Regions["footer.counted_values"] += int64(mark - times - p.dictFooter)
 		u.Regions["footer.time_counts"] += int64(times)
+		u.Regions["footer.dictionaries"] += int64(p.dictFooter)
 	}
 
 	return size
@@ -299,6 +349,10 @@ func walkChunk(c *ColumnUsage, kind vec.Kind, enc, flags uint8, count int, chunk
 		s.blob("values", count, 0)
 	case enc == encTimed:
 		s.timed(count)
+	case enc == encShared:
+		if len(s.src) > 0 && s.src[0] <= sharedRuns {
+			s.take(sharedNames[s.src[0]], len(s.src), count, 0)
+		}
 	case enc == encDict:
 		entries, n := binary.Uvarint(s.src)
 		if n <= 0 || entries > maxDictSize {

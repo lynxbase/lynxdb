@@ -27,18 +27,50 @@ type usageAmount struct {
 }
 
 type usageColumn struct {
-	Path           string        `json:"path"`
-	Kind           string        `json:"kind"`
-	Bytes          int64         `json:"bytes"`
-	Share          float64       `json:"share"`
-	ChunkBytes     int64         `json:"chunk_bytes"`
-	DirectoryBytes int64         `json:"directory_bytes"`
-	FilterBytes    int64         `json:"filter_bytes"`
-	Blocks         int           `json:"blocks"`
-	Values         uint64        `json:"values"`
-	BytesPerValue  float64       `json:"bytes_per_value"`
-	Encodings      []usageAmount `json:"encodings"`
-	Sections       []usageAmount `json:"sections,omitempty"`
+	Path           string  `json:"path"`
+	Kind           string  `json:"kind"`
+	Bytes          int64   `json:"bytes"`
+	Share          float64 `json:"share"`
+	ChunkBytes     int64   `json:"chunk_bytes"`
+	DirectoryBytes int64   `json:"directory_bytes"`
+	FilterBytes    int64   `json:"filter_bytes"`
+	// DictionaryBytes is what the part dictionaries of the column take,
+	// which Dictionary breaks down.
+	DictionaryBytes int64            `json:"dictionary_bytes,omitempty"`
+	Blocks          int              `json:"blocks"`
+	Values          uint64           `json:"values"`
+	BytesPerValue   float64          `json:"bytes_per_value"`
+	Encodings       []usageAmount    `json:"encodings"`
+	Sections        []usageAmount    `json:"sections,omitempty"`
+	Dictionary      *usageDictionary `json:"dictionary,omitempty"`
+}
+
+// usageDictionary sums the part dictionaries of one column: FlatBytes is
+// what the writers took its values to take in the forms of single blocks.
+type usageDictionary struct {
+	Parts          int    `json:"parts"`
+	Codes          uint64 `json:"codes"`
+	Entries        uint64 `json:"entries"`
+	Exceptions     uint64 `json:"exceptions"`
+	Values         uint64 `json:"values"`
+	Bytes          int64  `json:"bytes"`
+	SlotBytes      int64  `json:"slot_bytes"`
+	ExceptionBytes int64  `json:"exception_bytes"`
+	LiveBytes      int64  `json:"live_bytes"`
+	ChecksumBytes  int64  `json:"checksum_bytes"`
+	FlatBytes      uint64 `json:"flat_bytes_estimate"`
+}
+
+func usageDictionaryOf(d *part.DictionaryUsage) *usageDictionary {
+	if d == nil {
+		return nil
+	}
+
+	return &usageDictionary{
+		Parts: d.Parts, Codes: d.Codes, Entries: d.Entries, Exceptions: d.Exceptions, Values: d.Values,
+		Bytes: d.Bytes, SlotBytes: d.SlotBytes, ExceptionBytes: d.ExceptionBytes, LiveBytes: d.LiveBytes,
+		ChecksumBytes: d.ChecksumBytes, FlatBytes: d.FlatBytes,
+	}
 }
 
 type usageTier struct {
@@ -119,7 +151,7 @@ func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 
 		return float64(n) / float64(u.Bytes)
 	}
-	var chunks, dirs, filters int64
+	var chunks, dirs, filters, dicts int64
 	for key, c := range u.Columns {
 		chunks, dirs, filters = chunks+c.ChunkBytes, dirs+c.DirectoryBytes, filters+c.FilterBytes
 		col := usageColumn{
@@ -127,6 +159,12 @@ func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 			ChunkBytes: c.ChunkBytes, DirectoryBytes: c.DirectoryBytes, FilterBytes: c.FilterBytes,
 			Blocks: c.Blocks, Values: c.Values,
 			Encodings: usageAmounts(c.Encodings), Sections: usageAmounts(c.Sections),
+			Dictionary: usageDictionaryOf(c.Dictionary),
+		}
+		if c.Dictionary != nil {
+			col.DictionaryBytes = c.Dictionary.Bytes
+			col.Bytes += col.DictionaryBytes
+			dicts += col.DictionaryBytes
 		}
 		col.Share = share(col.Bytes)
 		if c.Values > 0 {
@@ -138,8 +176,8 @@ func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 		return cmp.Or(cmp.Compare(b.Bytes, a.Bytes), cmp.Compare(a.Path, b.Path), cmp.Compare(a.Kind, b.Kind))
 	})
 
-	fine := map[string]int64{"column_chunks": chunks, "directories.entries": dirs, "filters.own": filters}
-	coarse := map[string]int64{"column_chunks": chunks, "directories": dirs, "token_filters": filters}
+	fine := map[string]int64{"column_chunks": chunks, "directories.entries": dirs, "filters.own": filters, "dictionaries": dicts}
+	coarse := map[string]int64{"column_chunks": chunks, "directories": dirs, "token_filters": filters, "dictionaries": dicts}
 	for name, n := range u.Regions {
 		fine[name] += n
 		group := name

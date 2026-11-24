@@ -30,8 +30,12 @@ type ColumnExplain struct {
 	// Timed tells of the timed form as the writer would choose it.
 	Timed TimedExplain
 	// Lost counts, by reason, the blocks whose stored form is not their
-	// smallest.
+	// smallest; blocks stored as codes of a part dictionary, whose strings
+	// are not theirs alone, are left out.
 	Lost map[string]int
+	// Dictionary sums the part dictionaries of the column in the parts
+	// looked at, whole, whatever blocks were picked; nil when none has one.
+	Dictionary *DictionaryUsage
 }
 
 // FormSum sums the blocks, values and bytes of one form.
@@ -92,6 +96,12 @@ func (p *Part) ExplainColumn(e *ColumnExplain, pick func() bool) error {
 		}
 
 		return nil
+	}
+	if d, ok := p.Dictionary(id); ok {
+		if e.Dictionary == nil {
+			e.Dictionary = &DictionaryUsage{}
+		}
+		e.Dictionary.add(d)
 	}
 	w := NewWriter(io.Discard, Options{})
 	defer w.Close()
@@ -292,7 +302,7 @@ func (e *ColumnExplain) explainBlock(w *Writer, b *Block, ref *ColumnRef, c *shr
 		return
 	}
 	e.Smallest[best]++
-	if storedSize := b.storedBytes(ref); storedSize > smallest {
+	if storedSize := b.storedBytes(ref); storedSize > smallest && ref.enc != encShared {
 		e.Lost[lostReason(stored, best, sizes, s.reason, dictOK, stride > 0 && !w.dict.fewRepeats(c))]++
 	}
 }
