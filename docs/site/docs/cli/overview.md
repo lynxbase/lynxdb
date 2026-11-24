@@ -99,7 +99,7 @@ default_source: web
 |-----|-----------|
 | `profile` | `--profile` |
 | `default_format` | `--format` |
-| `default_since` | `lynxdb query --since` on server queries |
+| `default_since` | `--since` of `lynxdb query` against a server, when none of `--since`, `--from` and `--to` is given |
 | `default_source` | `--source` on `query` and `ingest` |
 
 `.lynxdbrc` holds client defaults only. Server settings live in the config file; see [config](./config-cmd.md).
@@ -130,7 +130,7 @@ Every command prints its flags and examples with `lynxdb <command> --help`.
 |------|---------|
 | 0 | Success, including a confirmation prompt answered with no |
 | 1 | Any other failure: an unknown flag, a missing argument, an execution error on the server, a bad file |
-| 2 | A required flag is missing, for example `lynxdb auth create` without `--name` |
+| 2 | A required flag is missing, for example `lynxdb auth create` without `--name`; or the time flags of `query` or `fields --values` are refused: `--since` with `--from` or `--to`; a time flag or `default_since` whose value is not a time; a start after its end or after now |
 | 3 | The CLI cannot connect to the server |
 | 4 | The query does not compile: a PPL syntax, semantic, type, planning or unsupported-feature error, reported by the server or by local compilation. Any other HTTP 400 answer, such as `QUERY_TOO_LARGE` or `VALIDATION_ERROR`, also exits with 4 |
 | 5 | The query timed out (`--timeout`, the CLI's 6-minute default, or a server timeout) |

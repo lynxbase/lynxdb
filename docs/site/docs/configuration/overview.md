@@ -174,7 +174,7 @@ default_source: web
 |-----|-------------|
 | `profile` | `--profile` |
 | `default_format` | `--format` |
-| `default_since` | `--since` on `lynxdb query` |
+| `default_since` | `--since` of `lynxdb query` against a server, when none of `--since`, `--from` and `--to` is given |
 | `default_source` | `--source` on `lynxdb query` and `lynxdb ingest` |
 
 ## Related

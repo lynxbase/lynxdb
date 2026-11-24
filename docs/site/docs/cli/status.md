@@ -111,17 +111,20 @@ The server's field catalog: every field path that the indexes hold, with the ind
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--values` | | With a field name: list its top values with counts |
-| `--since` | `-s` | With `--values`: only events from a relative window, such as `15m`, `1h`, `7d` |
-| `--from` | | With `--values`: absolute start time (ISO 8601) |
-| `--to` | | With `--values`: absolute end time (ISO 8601) |
+| `--since` | `-s` | With `--values`: only events from this time until now, such as `15m`, `-1h` or `@d` |
+| `--from` | | With `--values`: start of the time range, inclusive |
+| `--to` | | With `--values`: end of the time range, exclusive |
 | `--source` | | Only this index |
 | `--prefix` | | Only fields whose names start with this text |
+
+`--since`, `--from` and `--to` take the forms and follow the rules of [the time range of `query`](./query.md#time-range): `--from` or `--to` works alone, and `--since` with either is a usage error.
 
 ```bash
 lynxdb fields
 lynxdb fields --prefix st
 lynxdb fields status
 lynxdb fields status --values --since 1h
+lynxdb fields status --values --from -1d@d --to @d
 lynxdb fields --source nginx
 lynxdb fields --format json
 ```

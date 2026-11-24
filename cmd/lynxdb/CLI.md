@@ -60,7 +60,7 @@ API key: `--token`, then `LYNXDB_TOKEN`, then the credentials file written by `l
 ```yaml
 profile: prod
 default_format: table
-default_since: 6h         # lynxdb query --since, server queries
+default_since: 6h         # lynxdb query on a server with no --since, --from or --to
 default_source: web       # --source on query, ingest
 ```
 
@@ -93,9 +93,9 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces.
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--since` | `-s` | | Relative time range (`15m`, `1h`, `7d`) |
-| `--from` | | | Absolute start time (ISO 8601); needs `--to` |
-| `--to` | | | Absolute end time (ISO 8601); needs `--from` |
+| `--since` | `-s` | | Events from this time until now; also an offset without its `-` (`15m`, `1d@d`) |
+| `--from` | | | Start of the time range, inclusive; alone, until now |
+| `--to` | | | End of the time range, exclusive; alone, everything before it |
 | `--file` | `-f` | | Query a local file or glob instead of the server; `-` reads stdin |
 | `--sourcetype` | | | `sourcetype` of loaded text lines; local mode |
 | `--source` | | | `source` of loaded text lines; local mode |
@@ -107,11 +107,14 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces.
 | `--explain` | | `false` | Print the compiled plans without running the query |
 | `--raw` | | `false` | Disable log format detection; local mode |
 
+Time flags select events in `[from, to)` and take `now`, an offset back from now (`-15m`, `-1h`, `-7d`, `-2w`), a snap to the start of a unit in UTC, after an offset or alone (`-1d@d`, `@d`, `@w` for Monday), or a date or time (`2026-01-15`, `2026-01-15 08:00`, `2026-01-15T08:00:00Z`; UTC without a zone). `--since` with `--from` or `--to`, a value in no such form, `--from` after `--to`, and a start after now (`--since`, `--from` alone or `default_since`) are usage errors (exit 2) raised before any input loads or any request is sent. Relative times go to the server as text and resolve on its clock; a local query resolves them after its input loads.
+
 ```bash
 # Server
 lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
 lynxdb query 'source=main status>=500 | top 10 path' --since 24h
 lynxdb query 'source=main | stats count() by host' --from 2026-01-15T00:00:00Z --to 2026-01-16T00:00:00Z
+lynxdb query 'source=main | stats count() by host' --from -1d@d --to @d
 lynxdb q 'source=main | timechart span=5m count() by level' --since 1h
 lynxdb query 'source=main | stats p95(response_time) as p95, dc(user) as users by host' --format table
 
@@ -168,9 +171,9 @@ Alias `f`. Field catalog from the server: each field and the indexes that hold i
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--values` | | Top values for the named field |
-| `--since` | `-s` | Relative time range of `--values` |
-| `--from` | | Absolute start time of `--values` (ISO 8601) |
-| `--to` | | Absolute end time of `--values` (ISO 8601) |
+| `--since` | `-s` | Events of `--values` from this time until now, as on `query` |
+| `--from` | | Start of the time range of `--values`, as on `query` |
+| `--to` | | End of the time range of `--values`, as on `query` |
 | `--source` | | Only this index |
 | `--prefix` | | Only fields whose names start with this prefix |
 

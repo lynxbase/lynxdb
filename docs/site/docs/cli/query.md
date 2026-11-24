@@ -27,9 +27,9 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 
 | Flag | Short | Default | Modes | Description |
 |------|-------|---------|-------|-------------|
-| `--since` | `-s` | | all | Relative time range: `30s`, `15m`, `1h`, `7d`, `2w` |
-| `--from` | | | all | Absolute start time (ISO 8601); needs `--to` |
-| `--to` | | | all | Absolute end time (ISO 8601); needs `--from` |
+| `--since` | `-s` | | all | Read events from this time until now: `15m`, `-1h`, `1d@d`, `@d`, `2026-11-24` |
+| `--from` | | | all | Start of the time range, inclusive: `-1h`, `-1d@d`, `@d`, `now`, `2026-11-24T09:00:00Z` |
+| `--to` | | | all | End of the time range, exclusive, in the forms of `--from` |
 | `--timeout` | | `6m` | server | Client-side limit for the whole query, as a Go duration: `30s`, `10m` |
 | `--copy` | | `false` | server | Copy the result rows to the clipboard as TSV |
 | `--file` | `-f` | | local | Load a file or glob pattern, or standard input for `-`, and query it in process |
@@ -41,7 +41,38 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 | `--fail-on-empty` | | `false` | all | Exit with code 6 when the query returns no rows |
 | `--explain` | | `false` | all | Print the compiled plans and exit without running the query |
 
-`--timeout` has no effect on a local query, and `--copy` fails with an error there. `--since`, `--from` and `--to` select events by their time, in `[from, to)`; on a local query, `--since` counts back from the moment the input finished loading, so lines without a timestamp, which take their load time, fall inside it. With all three absent, a query covers all time unless it sets its own range with `earliest=` and `latest=`.
+`--timeout` has no effect on a local query, and `--copy` fails with an error there.
+
+### Time range
+
+`--since`, `--from` and `--to` select events by their time, in `[from, to)`. Each takes one of these forms:
+
+- `now`.
+- A relative time, a count of `s`, `m`, `h`, `d` or `w` back from now: `-15m`, `-1h`, `-7d`, `-2w`.
+- A snap, which truncates a relative time or now to the start of a unit in UTC: `-1d@d` is the start of yesterday, `@d` the start of today, `@h` the start of this hour, `@w` the start of this week, a Monday.
+- A date or time: `2026-11-24`, `2026-11-24 09:00`, `2026-11-24 09:00:00`, `2026-11-24T09:00:00`, `2026-11-24T09:00:00Z`, `2026-11-24T09:00:00.250+01:00`. A time without a zone is UTC.
+
+`--since` also reads a relative time without its leading `-`: `--since 15m` is `--since -15m`, and `--since 1d@d` is `--since -1d@d`.
+
+| Flags | Events read |
+|---|---|
+| `--since X` | From X until now |
+| `--from X` | From X until now |
+| `--to Y` | Every event before Y |
+| `--from X --to Y` | From X until Y; none when X equals Y |
+| none | All time, unless the query sets its own range with `earliest=` and `latest=`, or `default_since` of [`.lynxdbrc`](./overview.md#project-defaults-lynxdbrc) sets one for a server query |
+
+`--since` together with `--from` or `--to`, a value in none of these forms, `--from` after `--to`, and a start after now (`--since`, `--from` alone or `default_since`) fail before any input loads or any request is sent, with exit code 2 and a message that names the flag or `default_since`:
+
+```bash
+lynxdb query --file access.log --since 15m --from -1h 'stats count()'
+```
+
+```
+  ✖ ERROR: --since and --from cannot be used together
+```
+
+In server mode, relative times and snaps go to the server as text, so the server resolves them on its own clock. On a local query they count back from the moment the input finished loading, so lines without a timestamp, which take their load time, fall inside `--since 1m` or `--from -1m`.
 
 ## Server mode
 
@@ -51,6 +82,8 @@ Without `--file`, `lynxdb query` sends the query to `POST /api/v1/query` on the 
 lynxdb query 'source=main status>=500 | top 10 path' --since 24h
 lynxdb query 'source=main | stats count() by host' \
   --from 2026-01-15T00:00:00Z --to 2026-01-16T00:00:00Z
+lynxdb query 'source=main | stats count() by host' --from -1d@d --to @d
+lynxdb query 'source=main level=ERROR | stats count()' --from 2026-01-15T08:00:00Z
 lynxdb q 'source=main | timechart span=5m count() by level' --since 1h
 ```
 
