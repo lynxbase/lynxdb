@@ -458,7 +458,7 @@ func eventsWithUsersHashed(snap *Snapshot, workers int, hashed bool) ([]eventCou
 		m := &mergers[i]
 		m.arena = mem.NewArena()
 		defer m.arena.Free()
-		m.keys, m.set = vec.NewByteTable(m.arena), vec.NewHashSet128(m.arena)
+		m.keys, m.set = vec.NewByteTable(m.arena), vec.NewHashSet128()
 		m.users = make([]int64, groups)
 	}
 	// Equal keys always land in the same partition, so partitions count

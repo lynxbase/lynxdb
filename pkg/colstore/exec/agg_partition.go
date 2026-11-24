@@ -25,12 +25,14 @@ const (
 )
 
 // stageBudget is the memory, in bytes, that the workers of a query may hold
-// together in groups that wait to be merged. A query whose groups fit in it
-// merges them when the scan is over, partition by partition, each in the
-// cache of the goroutine that merges it. A worker whose part of the budget
-// is spent merges what it holds into the partitions while it scans, which
-// costs more per group, since the partitions are then in no one's cache,
-// and bounds the memory of the query by its groups instead of its rows.
+// together in groups that wait to be merged, and as much again in the
+// values of each distinct count that wait to be counted. A query whose
+// groups fit in it merges them when the scan is over, partition by
+// partition, each in the cache of the goroutine that merges it. A worker
+// whose part of the budget is spent merges what it holds into the
+// partitions while it scans, which costs more per group, since the
+// partitions are then in no one's cache, and bounds the memory of the query
+// by its groups and distinct values instead of its rows.
 var stageBudget = 1 << 30
 
 // wordPool holds the states of the groups of partitions between queries.
@@ -234,6 +236,43 @@ func (a *aggWorker) drain(log *vec.KeyPartitions, lock func(p int) *sync.Mutex, 
 func locked(mu *sync.Mutex, take func(p int), p int) {
 	defer mu.Unlock()
 	take(p)
+}
+
+// distinctPartition holds the values of one distinct count that hash into
+// one partition, of every group and for all workers of a query: a worker
+// takes it to count the values it has logged for it.
+type distinctPartition struct {
+	mu  sync.Mutex
+	set *vec.HashSet128
+	_   [128]byte
+}
+
+// settle counts the values that the worker has logged for distinct count d
+// once they take its part of the query's budget: it adds them to the
+// partitions and counts those that are new there.
+func (a *aggWorker) settle(d int) {
+	x := a.w.x
+	log := a.dlogs[d]
+	if log.Size() <= stageBudget/len(x.workers) {
+		return
+	}
+	if a.users == nil {
+		a.users = make([][]int64, a.plan.distinct)
+	}
+	a.drain(log, func(p int) *sync.Mutex { return &x.distinct(d, p).mu }, func(p int) {
+		dp := x.distinct(d, p)
+		if dp.set == nil {
+			dp.set = vec.NewHashSet128()
+		}
+		log.Drain(p, func(chunk []byte) { a.users[d] = countDistinct(dp.set, chunk, a.users[d]) })
+	})
+}
+
+// distinct returns partition p of distinct count d of the query.
+func (x *execution) distinct(d, p int) *distinctPartition {
+	x.dpartsOnce.Do(func() { x.dparts = make([]distinctPartition, x.q.agg.distinct<<partitionBits) })
+
+	return &x.dparts[d<<partitionBits|p]
 }
 
 // partition returns partition p of the query's groups.

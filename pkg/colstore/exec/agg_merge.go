@@ -41,6 +41,9 @@ func (m *merger) held() int {
 		return 0
 	}
 	n := m.post.held() + m.having.held() + m.sink.held() + m.arena.Size() + m.own.held() + m.lookup.held()
+	if m.set != nil {
+		n += m.set.Retained()
+	}
 	for i := range m.users {
 		n += 8 * cap(m.users[i])
 	}
@@ -244,6 +247,38 @@ func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, h *stat
 	m.sink.add(out)
 }
 
+// distinctRecord is the size of a record of a log of distinct values: one
+// word of the value's hash, mixed with its group, the length of the rest in
+// a byte, the other word of the hash and the group.
+const distinctRecord = vec.PairSize
+
+// countDistinct adds the values of a chunk of a log of distinct values to
+// set and counts those it did not hold by their groups in users, which it
+// returns with room for every group it met.
+func countDistinct(set *vec.HashSet128, chunk []byte, users []int64) []int64 {
+	const batch = 256 * distinctRecord
+	for at := 0; at < len(chunk); {
+		end := min(at+batch, len(chunk))
+		if set.Large() {
+			for i := at; i < end; i += distinctRecord {
+				set.Warm(binary.LittleEndian.Uint64(chunk[i:]), binary.LittleEndian.Uint64(chunk[i+9:]))
+			}
+		}
+		for ; at < end; at += distinctRecord {
+			if !set.Add(binary.LittleEndian.Uint64(chunk[at:]), binary.LittleEndian.Uint64(chunk[at+9:])) {
+				continue
+			}
+			group := int(binary.LittleEndian.Uint32(chunk[at+17:]))
+			for group >= len(users) {
+				users = append(users, 0)
+			}
+			users[group]++
+		}
+	}
+
+	return users
+}
+
 // mergeDistinct counts the distinct values that the workers logged, per
 // distinct count and shared group id.
 func (x *execution) mergeDistinct(ws []*worker) ([][]int64, error) {
@@ -257,21 +292,23 @@ func (x *execution) mergeDistinct(ws []*worker) ([][]int64, error) {
 	err := forEach(plan.distinct<<partitionBits, len(x.mergers), func(slot, i int) {
 		m := x.merger(slot)
 		if m.set == nil {
-			m.set = vec.NewHashSet128(m.arena)
+			m.set = vec.NewHashSet128()
 			m.users = make([][]int64, plan.distinct)
 			for d := range m.users {
 				m.users[d] = make([]int64, groups)
 			}
 		}
 		d, partition := i>>partitionBits, i&(1<<partitionBits-1)
-		users := m.users[d]
-		m.set.Clear()
+		// The values that workers counted while they scanned are in the
+		// set they shared; the others last no longer than their count.
+		set := m.set
+		if x.dparts != nil && x.dparts[i].set != nil {
+			set = x.dparts[i].set
+		} else {
+			set.Clear()
+		}
 		for _, w := range ws {
-			w.agg.dlogs[d].Each(partition, func(lo uint64, rec []byte) {
-				if m.set.Add(lo, binary.LittleEndian.Uint64(rec)) {
-					users[binary.LittleEndian.Uint32(rec[8:])]++
-				}
-			})
+			w.agg.dlogs[d].Chunks(partition, func(chunk []byte) { m.users[d] = countDistinct(set, chunk, m.users[d]) })
 		}
 	})
 	if err != nil {
@@ -285,6 +322,14 @@ func (x *execution) mergeDistinct(ws []*worker) ([][]int64, error) {
 				continue
 			}
 			for g, n := range x.mergers[i].users[d] {
+				out[d][g] += n
+			}
+		}
+		for _, w := range ws {
+			if w.agg.users == nil {
+				continue
+			}
+			for g, n := range w.agg.users[d] {
 				out[d][g] += n
 			}
 		}

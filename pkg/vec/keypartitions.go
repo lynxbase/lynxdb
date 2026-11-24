@@ -114,6 +114,28 @@ func (p *KeyPartitions) AddKey(h uint64, tag byte, tagged bool, key []byte, word
 	kp.n++
 }
 
+// PairSize is the size of a record that AddPair appends.
+const PairSize = keyHashSize + 1 + 12
+
+// AddPair appends to the partition that h selects a record whose payload is
+// the word a and the four bytes of b, in little-endian order: PairSize bytes
+// with its hash and the length of the payload.
+func (p *KeyPartitions) AddPair(h, a uint64, b uint32) {
+	kp := &p.parts[h>>(64-tableFingerprint-tablePartition)&p.mask]
+	if cap(kp.cur)-len(kp.cur) < PairSize {
+		p.grow(kp, PairSize)
+	}
+	n := len(kp.cur)
+	kp.cur = kp.cur[:n+PairSize]
+	rec := kp.cur[n : n+PairSize]
+	binary.LittleEndian.PutUint64(rec, h)
+	rec[keyHashSize] = 12
+	binary.LittleEndian.PutUint64(rec[keyHashSize+1:], a)
+	binary.LittleEndian.PutUint32(rec[keyHashSize+9:], b)
+	p.size += PairSize
+	kp.n++
+}
+
 // grow starts a chunk half the size of what the partition already holds, so
 // that the unused tail stays a fraction of the partition: a chunk that a
 // drained partition left when one of them has the room, or a new one.

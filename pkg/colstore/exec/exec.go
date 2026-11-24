@@ -56,6 +56,10 @@ type execution struct {
 	// unstaged counts the workers that merged groups into the partitions
 	// while they scanned.
 	unstaged atomic.Int32
+	// dparts are the partitions that the values of the distinct counts are
+	// counted in while workers scan, 1<<partitionBits for each count.
+	dparts     []distinctPartition
+	dpartsOnce sync.Once
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
 	// rows is the number of rows the workers aggregated.
@@ -290,6 +294,9 @@ func (x *execution) held() int64 {
 			if w.agg.table != nil {
 				n += w.agg.table.Retained()
 			}
+			for _, users := range w.agg.users {
+				n += 8 * cap(users)
+			}
 		}
 	}
 	for i := range x.mergers {
@@ -297,6 +304,11 @@ func (x *execution) held() int64 {
 	}
 	for i := range x.parts {
 		n += x.parts[i].held()
+	}
+	for i := range x.dparts {
+		if set := x.dparts[i].set; set != nil {
+			n += set.Retained()
+		}
 	}
 
 	return int64(n)
@@ -315,9 +327,17 @@ func (x *execution) release() {
 	for i := range x.parts {
 		x.parts[i].release()
 	}
+	for i := range x.dparts {
+		if set := x.dparts[i].set; set != nil {
+			set.Release()
+		}
+	}
 	for i := range x.mergers {
 		if m := &x.mergers[i]; m.arena != nil {
 			m.own.release()
+			if m.set != nil {
+				m.set.Release()
+			}
 			m.arena.Free()
 			for c := range m.batch {
 				m.batch[c].keys = nil

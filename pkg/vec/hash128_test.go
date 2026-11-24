@@ -47,9 +47,8 @@ func TestHash128DependsOnEveryByteAndTheLength(t *testing.T) {
 }
 
 func TestHashSet128CountsDistinctValues(t *testing.T) {
-	a := mem.NewArena()
-	defer a.Free()
-	s := NewHashSet128(a)
+	s := NewHashSet128()
+	defer s.Release()
 	for round := 0; round < 2; round++ {
 		r := rand.New(rand.NewSource(9))
 		want := map[[2]uint64]bool{}
@@ -124,9 +123,8 @@ func BenchmarkHash128(b *testing.B) {
 func BenchmarkHashSet128Add(b *testing.B) {
 	for _, distinct := range []int{1 << 12, 1 << 16, 1 << 22} {
 		b.Run(fmt.Sprintf("distinct=%d", distinct), func(b *testing.B) {
-			a := mem.NewArena()
-			defer a.Free()
-			s := NewHashSet128(a)
+			s := NewHashSet128()
+			defer s.Release()
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				x := Mix64(uint64(i%distinct) + 1)

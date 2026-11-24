@@ -62,20 +62,41 @@ func Mix64(x uint64) uint64 {
 }
 
 // HashSet128 is a set of 128-bit values that are already hashes: it keeps no
-// keys, so two different keys with equal hashes count as one; all of its
-// memory comes from an arena and holds no pointers.
+// keys, so two different keys with equal hashes count as one. Its memory
+// holds no pointers and comes from a pool that Release returns it to.
 type HashSet128 struct {
-	arena *mem.Arena
 	slots []uint64 // lo, hi pairs; both zero when empty
 	n     int
 	// zero records the all-zero value, which a slot cannot hold.
 	zero bool
+	// warmed takes the reads that only warm the cache, so that they are not
+	// dropped.
+	warmed uint64
 }
 
-// NewHashSet128 returns an empty set that allocates from a.
-func NewHashSet128(a *mem.Arena) *HashSet128 {
-	return &HashSet128{arena: a, slots: mem.Slice[uint64](a, 2*256, 2*256)}
+// largeSet is the number of slots from which a set is taken to have
+// outgrown the cache.
+const largeSet = 1 << 15
+
+// setSlots holds the slots of sets between their uses.
+var setSlots mem.Sized[uint64]
+
+// NewHashSet128 returns an empty set.
+func NewHashSet128() *HashSet128 {
+	s := &HashSet128{slots: setSlots.Get(2 * 256)}
+	clear(s.slots)
+
+	return s
 }
+
+// Release returns the set's memory; the set must not be used afterwards.
+func (s *HashSet128) Release() {
+	setSlots.Put(s.slots)
+	s.slots = nil
+}
+
+// Retained returns the bytes the set holds.
+func (s *HashSet128) Retained() int { return 8 * cap(s.slots) }
 
 // Len returns the number of distinct values.
 func (s *HashSet128) Len() int {
@@ -84,6 +105,17 @@ func (s *HashSet128) Len() int {
 	}
 
 	return s.n
+}
+
+// Large reports whether the set has outgrown the cache, so that values are
+// best added after a Warm of several of them.
+func (s *HashSet128) Large() bool { return len(s.slots) > 2*largeSet }
+
+// Warm reads the slot that a value starts at. After a Warm of the values
+// that are added next, the slots of them all come into the cache side by
+// side instead of one after another.
+func (s *HashSet128) Warm(lo, hi uint64) {
+	s.warmed ^= s.slots[2*(slot128(lo, hi)&uint64(len(s.slots)/2-1))]
 }
 
 // Clear removes every value and keeps the set's memory.
@@ -125,7 +157,8 @@ func (s *HashSet128) Add(lo, hi uint64) bool {
 // grow doubles the slots once half of them are taken.
 func (s *HashSet128) grow() {
 	old := s.slots
-	s.slots = mem.Slice[uint64](s.arena, 2*len(old), 2*len(old))
+	s.slots = setSlots.Get(2 * len(old))
+	clear(s.slots)
 	mask := uint64(len(s.slots)/2 - 1)
 	for j := 0; j < len(old); j += 2 {
 		lo, hi := old[j], old[j+1]
@@ -138,6 +171,7 @@ func (s *HashSet128) grow() {
 		}
 		s.slots[2*i], s.slots[2*i+1] = lo, hi
 	}
+	setSlots.Put(old)
 }
 
 // RecentHashes remembers the 128-bit values it saw last, one per slot, so a

@@ -1,7 +1,6 @@
 package exec
 
 import (
-	"encoding/binary"
 	"math"
 
 	"github.com/lynxbase/lynxdb/pkg/mem"
@@ -182,8 +181,11 @@ type aggWorker struct {
 	// that merged some while they scanned, from one.
 	staged *vec.KeyPartitions
 	order  int
-	// dlogs hold the values of each distinct count.
+	// dlogs hold the values of each distinct count that wait to be counted,
+	// and users the values that the worker counted while it scanned, per
+	// distinct count and shared group.
 	dlogs []*vec.KeyPartitions
+	users [][]int64
 	// floats records which arguments read a float.
 	floats []bool
 	one    [1]uint32
@@ -1201,6 +1203,7 @@ func (a *aggWorker) feedValues(i int, kind vec.Kind, c *vec.Column, t *target, n
 		for _, d := range arg.distinct {
 			if !a.streaming {
 				a.distinctBytes(d, t, c, kind, gid, rows, count)
+				a.settle(d)
 			}
 		}
 		if kind == vec.KindString && arg.numbers {
@@ -1361,6 +1364,7 @@ func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64,
 	for _, d := range arg.distinct {
 		if !a.streaming {
 			a.distinctInts(d, t, gid, vals, rows, n)
+			a.settle(d)
 		}
 	}
 	if len(arg.states) != 0 {
@@ -1500,6 +1504,7 @@ func (a *aggWorker) distinctFloats(arg *aggArg, t *target, gid []uint32, vals []
 			}
 			a.addDistinct(log, t.global[g], vec.Mix64(math.Float64bits(v)), vec.Mix64(math.Float64bits(v)^kindSeeds[vec.KindFloat]))
 		}
+		a.settle(d)
 	}
 }
 
@@ -1516,11 +1521,7 @@ var kindSeeds = [kindSlots + 1]uint64{
 func (a *aggWorker) addDistinct(log *vec.KeyPartitions, group uint32, lo, hi uint64) {
 	// Mixing the group into one word keeps equal values of different groups
 	// apart without widening the record.
-	lo ^= vec.Mix64(uint64(group) + 1)
-	var rec [12]byte
-	binary.LittleEndian.PutUint64(rec[:], hi)
-	binary.LittleEndian.PutUint32(rec[8:], group)
-	log.Add(lo, rec[:])
+	log.AddPair(lo^vec.Mix64(uint64(group)+1), hi, group)
 }
 
 func (a *aggWorker) distinctInts(d int, t *target, gid []uint32, vals []int64, rows []uint32, n int) {
