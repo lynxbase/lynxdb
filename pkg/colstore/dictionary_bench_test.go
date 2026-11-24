@@ -26,20 +26,24 @@ var repeatedColumns = []string{
 	"commit.cid",
 }
 
-// BenchmarkRepeatedColumns loads generated events into a store in two
-// halves, each written as runs and then compacted, so that the second
-// compaction merges a compacted run with flushed ones, in the design of
-// rows in time order and in the one ordered by the key of the Bluesky
-// benchmark. It reports the rows a second of the flushes and of the two
-// compactions, the peak of the heap while compacting, the bytes of the
-// store, and for the columns whose values repeat across blocks the bytes a
-// value, their part dictionaries among them, and the nanoseconds a value of
-// decoding their strings and, where blocks store codes of a part dictionary,
-// the codes alone, with the pages of the parts in memory. LYNXDB_BENCH_DICT_ROWS sets the events (4Mi by default),
-// LYNXDB_BENCH_DICT_RUNS the runs of each half (8), LYNXDB_BENCH_DICT_USERS
-// the accounts (a sixteenth of the events), LYNXDB_BENCH_DICT_FAVOUR the
-// power that favours the active ones (2) and LYNXDB_BENCH_DICT_POSTS the
-// latest posts that likes and replies name (an eighth of the events).
+// BenchmarkRepeatedColumns loads generated events into a store in three
+// steps, each written as runs and then compacted, in the design of rows in
+// time order and in the one ordered by the key of the Bluesky benchmark: the
+// first compaction merges flushed runs, the second a compacted run with as
+// many rows of flushed runs, and the third a compacted run with one flushed
+// run of a sixteenth of the events, most of whose blocks it can copy. It
+// reports the rows a second of the flushes and of the compactions, the peak
+// of the heap while compacting, the bytes of the store, and for the columns
+// whose values repeat across blocks the bytes a value, their part
+// dictionaries among them, and the nanoseconds a value of decoding their
+// strings and, where blocks store codes of a part dictionary, the codes
+// alone, with the pages of the parts in memory. LYNXDB_BENCH_DICT_ROWS sets
+// the events of the first two steps (4Mi by default), LYNXDB_BENCH_DICT_RUNS
+// the runs of each of the two (8), LYNXDB_BENCH_DICT_USERS the accounts (a
+// sixteenth of the events), LYNXDB_BENCH_DICT_FAVOUR the power that favours
+// the active ones (2) and LYNXDB_BENCH_DICT_POSTS the latest posts that
+// likes and replies name (an eighth of the events); LYNXDB_BENCH_DICT_ALL
+// lists every string column and region instead of the columns that repeat.
 func BenchmarkRepeatedColumns(b *testing.B) {
 	rows := envInt(b, "LYNXDB_BENCH_DICT_ROWS", 1<<22)
 	runs := envInt(b, "LYNXDB_BENCH_DICT_RUNS", 8)
@@ -56,10 +60,10 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 			TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, FlushLevel: part.LevelFastest,
 		}},
 	}
-	loaded := rows / (2 * runs) * (2 * runs)
+	loaded, late := rows/(2*runs)*(2*runs), rows/16
 	for _, d := range designs {
 		b.Run(d.name, func(b *testing.B) {
-			var flush, first, second time.Duration
+			var flush, first, second, third time.Duration
 			var peak uint64
 			var report string
 			var chunk []byte
@@ -76,9 +80,9 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 				}
 				// The events of a run are made as it is loaded, so that the
 				// heap holds one run of them and what the store holds.
-				load := func() {
+				load := func(runs, rows int) {
 					for range runs {
-						chunk = g.Append(chunk[:0], loaded/(2*runs))
+						chunk = g.Append(chunk[:0], rows/runs)
 						begin := time.Now()
 						if _, err := s.Append(chunk); err != nil {
 							b.Fatal(err)
@@ -100,10 +104,12 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 
 					return took
 				}
-				load()
+				load(runs, loaded/2)
 				first += compact()
-				load()
+				load(runs, loaded/2)
 				second += compact()
+				load(1, late)
+				third += compact()
 				b.StopTimer()
 				if i == 0 {
 					report = repeatedReport(b, s)
@@ -117,9 +123,10 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 				b.StartTimer()
 			}
 			n := float64(b.N)
-			b.ReportMetric(float64(loaded)*n/flush.Seconds(), "flush-rows/s")
+			b.ReportMetric(float64(loaded+late)*n/flush.Seconds(), "flush-rows/s")
 			b.ReportMetric(float64(loaded/2)*n/first.Seconds(), "merge1-rows/s")
 			b.ReportMetric(float64(loaded)*n/second.Seconds(), "merge2-rows/s")
+			b.ReportMetric(float64(loaded+late)*n/third.Seconds(), "merge3-rows/s")
 			b.ReportMetric(float64(peak)/1e6, "MB-heap-peak")
 			// The log of a benchmark keeps ten lines.
 			fmt.Printf("%s\n%s", b.Name(), report)
