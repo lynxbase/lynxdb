@@ -9,8 +9,35 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
+// EpochSeconds is the time of a HEC event in seconds since the Unix epoch.
+// Splunk takes it as a JSON number or as a string that holds one, which is
+// what Docker's Splunk logging driver sends.
+type EpochSeconds float64
+
+func (t *EpochSeconds) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		// A JSON number begins with a digit or a minus sign; the check
+		// keeps "null" from reading as no time at all.
+		if s == "" || (s[0] != '-' && (s[0] < '0' || s[0] > '9')) {
+			return fmt.Errorf("splunkhec: time %q is not a number of seconds", s)
+		}
+		b = []byte(s)
+	}
+	var secs float64
+	if err := json.Unmarshal(b, &secs); err != nil {
+		return err
+	}
+	*t = EpochSeconds(secs)
+
+	return nil
+}
+
 type Event struct {
-	Time       *float64               `json:"time,omitempty"`
+	Time       *EpochSeconds          `json:"time,omitempty"`
 	Event      interface{}            `json:"event"`
 	Source     string                 `json:"source,omitempty"`
 	SourceType string                 `json:"sourcetype,omitempty"`
@@ -22,8 +49,9 @@ type Event struct {
 func (h Event) ToEvent() *event.Event {
 	var ts time.Time
 	if h.Time != nil {
-		sec := int64(*h.Time)
-		ts = time.Unix(sec, int64((*h.Time-float64(sec))*1e9))
+		secs := float64(*h.Time)
+		whole := int64(secs)
+		ts = time.Unix(whole, int64((secs-float64(whole))*1e9))
 	}
 
 	raw := rawString(h.Event)

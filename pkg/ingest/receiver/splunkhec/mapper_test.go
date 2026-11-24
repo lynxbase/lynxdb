@@ -26,7 +26,7 @@ func TestMapper_EventJSON_StringifiedRaw(t *testing.T) {
 }
 
 func TestMapper_TimeFractional_Parsed(t *testing.T) {
-	ts := 1700000000.25
+	ts := EpochSeconds(1700000000.25)
 	ev := Event{Time: &ts, Event: "hello"}.ToEvent()
 	if got := ev.Time.UnixNano(); got != 1700000000250000000 {
 		t.Fatalf("UnixNano = %d", got)

@@ -190,3 +190,61 @@ func TestHandler_Health_Returns200(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rr.Code)
 	}
 }
+
+// Docker's Splunk logging driver sends the time as a string.
+func TestHandler_Event_TimeAsString_Stored(t *testing.T) {
+	var stored []*event.Event
+	h := NewHandler(Config{Auth: AuthConfig{Check: acceptAll}}, func(_ context.Context, events []*event.Event) error {
+		stored = append(stored, events...)
+		return nil
+	})
+	rr := httptest.NewRecorder()
+	body := `{"event":"as a string","time":"1700000000.250000"}` + "\n" +
+		`{"event":"as a number","time":1700000000.25}` + "\n"
+	req := httptest.NewRequest(http.MethodPost, "/services/collector/event", strings.NewReader(body))
+	req.Header.Set("Authorization", "Splunk token")
+
+	h.HandleEvent(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := resp["skipped_lines"]; ok {
+		t.Fatalf("skipped_lines = %v, want none", n)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("stored %d events, want 2", len(stored))
+	}
+	for _, ev := range stored {
+		if got := ev.Time.UnixNano(); got != 1700000000250000000 {
+			t.Errorf("%q: UnixNano = %d, want 1700000000250000000", ev.Raw, got)
+		}
+	}
+}
+
+func TestHandler_Event_TimeNotANumber_Skipped(t *testing.T) {
+	for _, tm := range []string{`"yesterday"`, `""`, `"NaN"`, `"Inf"`, `"null"`, `"0x10"`, `"1e400"`, `true`, `[1700000000]`} {
+		submitted := 0
+		h := NewHandler(Config{Auth: AuthConfig{Check: acceptAll}}, func(_ context.Context, events []*event.Event) error {
+			submitted += len(events)
+			return nil
+		})
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/services/collector/event", strings.NewReader(`{"event":"hello","time":`+tm+`}`))
+		req.Header.Set("Authorization", "Splunk token")
+
+		h.HandleEvent(rr, req)
+
+		var resp map[string]interface{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if submitted != 0 || resp["skipped_lines"] != float64(1) {
+			t.Errorf("time %s: submitted %d events, skipped_lines = %v; want 0 and 1", tm, submitted, resp["skipped_lines"])
+		}
+	}
+}
