@@ -33,9 +33,9 @@ const (
 	sharedTrialValues = 1024
 	// sharedGain makes a column shared when that takes at most all but one
 	// part in this many of what the forms of single blocks take: less is
-	// within what the sizes are known to before the part is written, and
-	// not worth reading a dictionary beside every block.
-	sharedGain = 8
+	// not worth what merging a dictionary costs over merging the blocks,
+	// nor reading a dictionary beside every block.
+	sharedGain = 4
 	// shareSample is one in how many runs of shareRun values is looked at
 	// first; a column of which fewer than one in shareRepeats of those
 	// repeats an earlier one is left alone.
@@ -677,10 +677,10 @@ func (w *Writer) dropPlans() {
 // Share tells the writer, before the first block, every row that the part
 // will hold, as runs of rows of batches, so that it can give the part a
 // dictionary for the string columns whose values repeat across its blocks:
-// those of one length for the most part, of which at least one in eight
-// repeats an earlier one, and that the forms of single blocks do not hold
-// in less. The batches may change once it returns. A part written without
-// it has no dictionary.
+// those of one length for the most part, of which at least one in four
+// repeats an earlier one, and that take a quarter less so than in the forms
+// of single blocks. The batches may change once it returns. A part written
+// without it has no dictionary.
 func (w *Writer) Share(runs []shred.Run) {
 	if w.err != nil || w.rows > 0 || !w.packs(vec.KindString) {
 		return

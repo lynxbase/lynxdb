@@ -2,6 +2,7 @@ package part
 
 import (
 	"bytes"
+	"math"
 	"math/bits"
 	"sort"
 
@@ -243,7 +244,9 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 	sp.numbers = grow(sp.numbers, int(sh.ownValues))[:0]
 	introduce := len(sp.srcs) == 0
 	col := &m.shareCol
+	m.shareSeen = m.shareSeen[:0]
 	for pass := 0; pass < 2; pass++ {
+		seq := 0
 		for _, c := range m.cursors {
 			if c.done {
 				continue
@@ -253,10 +256,6 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 				continue
 			}
 			for b := c.firstBlock; b < c.endBlock; b++ {
-				// One block in shareSample first, from all over the range.
-				if (b%shareSample == 0) != (pass == 0) {
-					continue
-				}
 				if err := c.part.OpenBlock(b, &m.last); err != nil {
 					return false, err
 				}
@@ -264,11 +263,18 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 				if !ok || ref.enc == encShared || ref.Count == 0 {
 					continue
 				}
+				// One block in shareSample first, from all over the range.
+				if seq++; ((seq-1)%shareSample == 0) != (pass == 0) {
+					continue
+				}
 				if err := m.last.DecodeValues(ref, col); err != nil {
 					return false, err
 				}
 				if !sp.take(c.part, b, col, ref.Count) {
 					return false, nil
+				}
+				if pass == 0 {
+					m.shareSeen = append(m.shareSeen, [2]uint64{set.added, uint64(set.len())})
 				}
 				if grown := int64(set.retained()) + 4*int64(sh.ownValues) - sp.reserved; grown >= setStep {
 					if !reserve(grown) {
@@ -292,7 +298,7 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 			for number := 0; number < set.len(); number++ {
 				sp.stats.add(set.numbered(uint32(number)))
 			}
-			if !sp.layout.set(&sp.stats) {
+			if !sp.layout.set(&sp.stats) || !sp.promising(sh, m.shareSeen) {
 				return false, nil
 			}
 		}
@@ -309,6 +315,40 @@ func (m *merger) gather(sp *sharedPlan, sh *pathShare) (bool, error) {
 	set.seal()
 
 	return true, nil
+}
+
+// promising reports whether the strings read first, whose numbers of values
+// and of distinct strings after each block seen holds, leave it likely that
+// sharing the column is worth it: whether, with the repeats growing over all
+// the values as they grew from the first half of those read to all of them,
+// and no slower than the values where that cannot be told, the dictionary
+// and the codes come to within a quarter of what they must be.
+func (sp *sharedPlan) promising(sh *pathShare, seen [][2]uint64) bool {
+	if len(seen) == 0 {
+		return true
+	}
+	last := seen[len(seen)-1]
+	values, distinct := float64(last[0]), float64(last[1])
+	if values < sharedTrialValues {
+		return true
+	}
+	repeats, growth := 1-distinct/values, 1.0
+	for _, at := range seen {
+		// The first block read by which half of the values were.
+		if 2*at[0] >= last[0] {
+			if early := 1 - float64(at[1])/float64(at[0]); at[0] < last[0] && early > 0 && repeats > 0 {
+				growth = min(max(math.Log(repeats/early)/math.Log(values/float64(at[0])), 0), 1)
+			}
+
+			break
+		}
+	}
+	all := float64(sh.ownValues)
+	strings := max(all*(1-min(1, repeats*math.Pow(all/values, growth))), distinct)
+	entry := float64(sp.layout.bits+sp.layout.lead) / 8
+	room := float64(sh.ownBytes)*(sharedGain-1)/sharedGain - all*float64(bits.Len64(sh.ownValues))/8
+
+	return strings*entry <= room*1.25
 }
 
 // worth reports whether the dictionary of the plan and the codes of the

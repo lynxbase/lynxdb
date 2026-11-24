@@ -201,6 +201,9 @@ type merger struct {
 	shareIdx   map[string]int32
 	shareCol   vec.Column
 	shareCodes []uint32
+	// shareSeen holds, after each block that gather reads first, the values
+	// and the distinct strings it has read.
+	shareSeen [][2]uint64
 }
 
 var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
@@ -218,6 +221,7 @@ var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
 		keyBuf: m.keyBuf[:0], times: m.times[:0], lastCols: m.lastCols,
 		counts: m.counts[:0], unsorted: m.unsorted[:0], space: m.space,
 		shares: m.shares[:0], shareIdx: m.shareIdx, shareCol: m.shareCol, shareCodes: m.shareCodes,
+		shareSeen: m.shareSeen[:0],
 	}
 
 	return true
