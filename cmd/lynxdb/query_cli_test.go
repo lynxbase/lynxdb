@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -74,20 +76,23 @@ func TestQueryFile_NDJSONTempFile(t *testing.T) {
 	}
 }
 
-func TestQuerySinceSendsRelativeTimeBounds(t *testing.T) {
-	reqCh := make(chan struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	}, 1)
+// boundsServer starts a server that answers every query with no events and
+// returns its URL and a func that returns the from and to of each query it
+// got, nil where a request left one out.
+func boundsServer(t *testing.T) (string, func() [][2]any) {
+	t.Helper()
+	var (
+		mu     sync.Mutex
+		bounds [][2]any
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			From string `json:"from"`
-			To   string `json:"to"`
-		}
+		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		reqCh <- req
+		mu.Lock()
+		bounds = append(bounds, [2]any{req["from"], req["to"]})
+		mu.Unlock()
 
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
@@ -99,16 +104,120 @@ func TestQuerySinceSendsRelativeTimeBounds(t *testing.T) {
 			"meta": map[string]interface{}{},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
-	_, _, err := runCmd(t, "--server", srv.URL, "--quiet", "query", "--since", "1h", "search source=main error")
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
+	return srv.URL, func() [][2]any {
+		mu.Lock()
+		defer mu.Unlock()
+		return bounds
+	}
+}
+
+// TestQueryTimeFlagsSendText pins the bounds that the time flags send: text
+// that the server resolves on its own clock, and no from for --to alone.
+func TestQueryTimeFlagsSendText(t *testing.T) {
+	for _, c := range []struct {
+		args     []string
+		from, to any
+	}{
+		{nil, nil, nil},
+		{[]string{"--since", "1h"}, "-1h", "now"},
+		{[]string{"--since", "1d@d"}, "-1d@d", "now"},
+		{[]string{"--since", "@d"}, "@d", "now"},
+		{[]string{"--from", "2025-01-15T08:00:00Z"}, "2025-01-15T08:00:00Z", "now"},
+		{[]string{"--to", "2025-01-15T08:00:00Z"}, nil, "2025-01-15T08:00:00Z"},
+		{[]string{"--from", "-1d@d", "--to", "@d"}, "-1d@d", "@d"},
+	} {
+		url, bounds := boundsServer(t)
+		args := append([]string{"--server", url, "--quiet", "query"}, c.args...)
+		if _, _, err := runCmd(t, append(args, "search source=main error")...); err != nil {
+			t.Fatalf("%q: %v", c.args, err)
+		}
+		if got := bounds(); len(got) != 1 || got[0] != [2]any{c.from, c.to} {
+			t.Errorf("%q: sent %v, want one query with from %v and to %v", c.args, got, c.from, c.to)
+		}
+	}
+}
+
+// TestQueryRefusedTimeFlagsSendNothing pins that time flags that conflict
+// or hold a value that is not valid fail as usage errors before a request.
+func TestQueryRefusedTimeFlagsSendNothing(t *testing.T) {
+	for _, args := range [][]string{
+		{"--since", "15m", "--from", "-1h"},
+		{"--since", "15m", "--to", "now"},
+		{"--since", "banana"},
+		{"--from", "banana"},
+		{"--to", "banana"},
+		{"--from", "-1h", "--to", "-2h"},
+		{"--explain", "--since", "banana"},
+	} {
+		url, bounds := boundsServer(t)
+		_, _, err := runCmd(t, append(append([]string{"--server", url, "query"}, args...), "source=main")...)
+		var usage usageError
+		if !errors.As(err, &usage) {
+			t.Errorf("%q: got %v, want a usage error", args, err)
+		}
+		if got := bounds(); len(got) != 0 {
+			t.Errorf("%q: sent %v, want no request", args, got)
+		}
+	}
+}
+
+// TestQueryDefaultSince pins that default_since of .lynxdbrc bounds a
+// server query that gives no time flag and gives way to any time flag.
+func TestQueryDefaultSince(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".lynxdbrc"), []byte("default_since: 6h\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	for _, c := range []struct {
+		args     []string
+		from, to any
+	}{
+		{nil, "-6h", "now"},
+		{[]string{"--since", "1h"}, "-1h", "now"},
+		{[]string{"--from", "-1d"}, "-1d", "now"},
+		{[]string{"--to", "-1d"}, nil, "-1d"},
+	} {
+		url, bounds := boundsServer(t)
+		args := append([]string{"--server", url, "--quiet", "query"}, c.args...)
+		if _, _, err := runCmd(t, append(args, "source=main")...); err != nil {
+			t.Fatalf("%q: %v", c.args, err)
+		}
+		if got := bounds(); len(got) != 1 || got[0] != [2]any{c.from, c.to} {
+			t.Errorf("%q: sent %v, want one query with from %v and to %v", c.args, got, c.from, c.to)
+		}
 	}
 
-	req := <-reqCh
-	if req.From != "-1h" || req.To != "now" {
-		t.Fatalf("bounds = (%q, %q), want (-1h, now)", req.From, req.To)
+	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "json",
+		"stats count() as count")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jsonCount(t, stdout); got != 1000 {
+		t.Errorf("local query: count = %d, want all 1000 events", got)
+	}
+}
+
+// TestQueryInvalidDefaultSince pins that a default_since that is not valid
+// fails as a usage error that names it, before a request.
+func TestQueryInvalidDefaultSince(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".lynxdbrc"), []byte("default_since: banana\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	url, bounds := boundsServer(t)
+	_, _, err := runCmd(t, "--server", url, "query", "source=main")
+	var usage usageError
+	if !errors.As(err, &usage) || !strings.HasPrefix(err.Error(), `invalid default_since "banana": `) {
+		t.Errorf("got %v, want a usage error that names default_since", err)
+	}
+	if got := bounds(); len(got) != 0 {
+		t.Errorf("sent %v, want no request", got)
 	}
 }
 

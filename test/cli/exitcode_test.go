@@ -3,6 +3,7 @@
 package cli_test
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,42 @@ func TestExit3_ServerQueryIgnoresStdin(t *testing.T) {
 	}
 	if want := "lynxdb query --file - 'source=web | stats count()'"; !strings.Contains(r.Stderr, want) {
 		t.Errorf("expected stderr to show %q, got:\n%s", want, r.Stderr)
+	}
+}
+
+// TestExit2_TimeFlags pins that time flags that conflict or hold a value
+// that is not valid exit with the usage code in local and server mode. The
+// input file does not exist and no server listens, so the code also shows
+// that nothing loads and no request is sent.
+func TestExit2_TimeFlags(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.log")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--since", "15m", "--from", "2025-01-15T08:00:00Z"}, "--since and --from cannot be used together"},
+		{[]string{"--since", "15m", "--to", "2025-01-15T08:00:00Z"}, "--since and --to cannot be used together"},
+		{[]string{"--since", "banana"}, `invalid --since "banana": use now, a relative time (-15m, -1h, -7d, -2w), ` +
+			`a snapped time (-1d@d, @d) or a date or time (2026-11-24, 2026-11-24T09:00:00Z); ` +
+			`a relative time may leave out its -, as in 15m`},
+		{[]string{"--from", "-1h@z"}, `invalid --from "-1h@z": use now, a relative time (-15m, -1h, -7d, -2w), ` +
+			`a snapped time (-1d@d, @d) or a date or time (2026-11-24, 2026-11-24T09:00:00Z)`},
+		{[]string{"--from", "2025-01-15T09:00:00Z", "--to", "2025-01-15T08:00:00Z"},
+			`--from "2025-01-15T09:00:00Z" is after --to "2025-01-15T08:00:00Z"`},
+	} {
+		for _, mode := range [][]string{
+			{"query", "--file", missing},
+			{"--server", "http://127.0.0.1:1", "query"},
+		} {
+			args := append(append(mode, c.args...), "stats count()")
+			r := runLynxDB(t, args...)
+			if r.ExitCode != 2 {
+				t.Errorf("%q: exit code %d, want 2 (usage)\nstderr: %s", args, r.ExitCode, r.Stderr)
+			}
+			if !strings.Contains(r.Stderr, "ERROR: "+c.want+"\n") {
+				t.Errorf("%q: stderr lacks %q:\n%s", args, c.want, r.Stderr)
+			}
+		}
 	}
 }
 

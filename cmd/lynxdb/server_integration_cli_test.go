@@ -1110,15 +1110,35 @@ func TestServerQuery_ConnectionRefused_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestServerQuery_IncompleteFromTo_ReturnsError(t *testing.T) {
-	baseURL := newTestServer(t)
+// TestServerQuery_TimeFlags pins the ranges that the time flags select on a
+// server, [from, to): of the 1000 events of idx_access, 600 come before
+// 08:05:00.157, the time of the 601st.
+func TestServerQuery_TimeFlags(t *testing.T) {
+	baseURL := setupMultiIndexServer(t)
 
-	// --from without --to should fail.
-	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"--from", "2026-01-01T00:00:00Z",
-		"source=main | stats count() as count")
-	if err == nil {
-		t.Fatal("expected error for --from without --to, got nil")
+	for _, c := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"--from", "2025-01-15T08:05:00.157Z"}, 400},
+		{[]string{"--to", "2025-01-15T08:05:00.157Z"}, 600},
+		{[]string{"--from", "2025-01-15T08:00:00Z", "--to", "2025-01-15T08:05:00.157Z"}, 600},
+		{[]string{"--from", "2025-01-15", "--to", "2025-01-15T08:05:00.157Z"}, 600},
+		{[]string{"--from", "2025-01-15T08:05:00.157Z", "--to", "2025-01-15T08:05:00.157Z"}, 0},
+		{[]string{"--to", "now"}, 1000},
+		{[]string{"--to", "@d"}, 1000},
+		{[]string{"--from", "-1h"}, 0},
+		{[]string{"--since", "2025-01-15"}, 1000},
+		{[]string{"--since", "1h"}, 0},
+	} {
+		args := append([]string{"--server", baseURL, "query", "--format", "json"}, c.args...)
+		stdout, _, err := runCmd(t, append(args, "source=idx_access | stats count() as count")...)
+		if err != nil {
+			t.Fatalf("%q: %v", c.args, err)
+		}
+		if got := jsonCount(t, stdout); got != c.want {
+			t.Errorf("%q: count = %d, want %d", c.args, got, c.want)
+		}
 	}
 }
 

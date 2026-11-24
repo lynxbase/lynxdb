@@ -435,6 +435,43 @@ func TestPipe_SinceCountsFromAfterLoad(t *testing.T) {
 	}
 }
 
+// TestPipe_FromOrToAlone pins that --from alone reads from that time until
+// now and --to alone reads every event before that time: an event at from
+// is in the range, an event at to is not.
+func TestPipe_FromOrToAlone(t *testing.T) {
+	for _, c := range []struct {
+		flag, value   string
+		count, lo, hi float64
+	}{
+		{"--from", "2025-01-15T08:02:00Z", 8, 2, 9},
+		{"--to", "2025-01-15T08:05:00Z", 5, 0, 4},
+	} {
+		r := runLynxDBWithStdin(t, minuteLines(10), "query", "--file", "-", "--format", "json",
+			c.flag, c.value, "stats count() as count, min(n) as lo, max(n) as hi")
+		if r.ExitCode != 0 {
+			t.Fatalf("%s %s: exit code %d, stderr: %s", c.flag, c.value, r.ExitCode, r.Stderr)
+		}
+		rows := mustParseJSON(t, r.Stdout)
+		if len(rows) != 1 || rows[0]["count"] != c.count || rows[0]["lo"] != c.lo || rows[0]["hi"] != c.hi {
+			t.Errorf("%s %s: got %v, want count=%v lo=%v hi=%v", c.flag, c.value, rows, c.count, c.lo, c.hi)
+		}
+	}
+}
+
+// TestPipe_FromCountsFromAfterLoad pins that a relative --from alone counts
+// from after the input loaded, as --since does.
+func TestPipe_FromCountsFromAfterLoad(t *testing.T) {
+	r := runLynxDBWithStdin(t, "first\nsecond\n", "query", "--file", "-", "--format", "json",
+		"--from", "-1m", "stats count() as count")
+	if r.ExitCode != 0 {
+		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
+	}
+
+	if got := jsonCount(t, r.Stdout); got != 2 {
+		t.Errorf("expected count=2, got %d", got)
+	}
+}
+
 // TestPipe_ExplainPrefixPrintsPlan pins that a local query starting with
 // explain prints its plan instead of rows.
 func TestPipe_ExplainPrefixPrintsPlan(t *testing.T) {

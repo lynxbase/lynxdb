@@ -43,9 +43,6 @@ func init() {
 
 func newQueryCmd() *cobra.Command {
 	var (
-		since      string
-		from       string
-		to         string
 		file       string
 		sourcetype string
 		source     string
@@ -68,6 +65,7 @@ main, and a local query that names no source reads main.`,
 		Example: `  lynxdb query 'source=main | where level = "error"'                     Search errors
   lynxdb query 'source=main | where level = "error" | stats count() by host'
   lynxdb query 'source=main | where status >= 500 | top 10 uri' --since 1h
+  lynxdb query 'source=main level=ERROR' --from -1d@d --to @d             Yesterday, in UTC
   lynxdb query --file app.log 'stats count() by level'                    Query a local file
   cat app.log | lynxdb query --file - 'where duration_ms > 1000'          Query standard input`,
 		Args: cobra.ArbitraryArgs,
@@ -79,17 +77,22 @@ main, and a local query that names no source reads main.`,
 			if projectRC != nil && projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
 				source = projectRC.DefaultSource
 			}
-
-			if file == "" {
+			var defaultSince string
+			if file == "" && projectRC != nil {
 				// default_since of .lynxdbrc bounds server queries only:
 				// local files hold data of any age.
-				if projectRC != nil && projectRC.DefaultSince != "" && !cmd.Flags().Changed("since") {
-					since = projectRC.DefaultSince
-				}
+				defaultSince = projectRC.DefaultSince
+			}
+			tr, err := timeRangeOf(cmd.Flags(), defaultSince, time.Now())
+			if err != nil {
+				return err
+			}
+
+			if file == "" {
 				if explain {
 					return runLocalExplain(query, serverQueryOptions)
 				}
-				err := runQueryServer(query, since, from, to, timeout, outputFile, failEmpty, analyze)
+				err := runQueryServer(query, tr, timeout, outputFile, failEmpty, analyze)
 				if err != nil {
 					return err
 				}
@@ -105,23 +108,16 @@ main, and a local query that names no source reads main.`,
 			if explain {
 				return runLocalExplain(query, localQueryOptions)
 			}
-			earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
-			if err != nil {
-				return err
-			}
 			lq := localQuery{
 				query:      query,
-				earliest:   earliest,
-				latest:     latest,
+				earliest:   tr.from,
+				latest:     tr.to,
 				source:     source,
 				sourcetype: sourcetype,
 				outputFile: outputFile,
 				failEmpty:  failEmpty,
 				analyze:    analyze,
 				raw:        rawMode,
-			}
-			if _, err := lq.options(); err != nil {
-				return err
 			}
 			if file == "-" {
 				return runQueryStdin(lq)
@@ -131,9 +127,9 @@ main, and a local query that names no source reads main.`,
 	}
 
 	f := cmd.Flags()
-	f.StringVarP(&since, "since", "s", "", "Relative time range (e.g., 15m, 1h, 7d)")
-	f.StringVar(&from, "from", "", "Absolute start time (ISO 8601)")
-	f.StringVar(&to, "to", "", "Absolute end time (ISO 8601)")
+	f.StringP("since", "s", "", "Read events from this time until now: 15m, -1h, -1d@d, @d, 2026-11-24")
+	f.String("from", "", "Start of the time range: -1h, -1d@d, @d, now, 2026-11-24T09:00:00Z")
+	f.String("to", "", "End of the time range, exclusive: -1h, @d, now, 2026-11-24T09:00:00Z")
 	f.StringVarP(&file, "file", "f", "", "Query local files (path or glob) instead of the server; - reads standard input")
 	f.StringVar(&sourcetype, "sourcetype", "", "Override source type detection")
 	f.StringVar(&source, "source", "", "Set source metadata")
@@ -484,12 +480,7 @@ func printLocalResults(rows []map[string]interface{}, warnings []string, st *sta
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout, outputFile string, failEmpty, analyze bool) error {
-	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
-	if err != nil {
-		return err
-	}
-
+func runQueryServer(query string, tr timeRange, timeout, outputFile string, failEmpty, analyze bool) error {
 	ctx := context.Background()
 	if timeout != "" {
 		dur, err := time.ParseDuration(timeout)
@@ -505,31 +496,7 @@ func runQueryServer(query, since, from, to, timeout, outputFile string, failEmpt
 		defer cancel()
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, outputFile, failEmpty, analyze)
-}
-
-func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
-	if since != "" {
-		duration := strings.TrimPrefix(since, "-")
-		if _, err := timerange.ParseRelative(duration); err != nil {
-			return "", "", fmt.Errorf("invalid --since: %w", err)
-		}
-
-		return "-" + duration, "now", nil
-	}
-	if from != "" && to != "" {
-		tr, err := timerange.FromAbsoluteRange(from, to)
-		if err != nil {
-			return "", "", fmt.Errorf("invalid time range: %w", err)
-		}
-
-		return tr.Earliest.Format(time.RFC3339Nano), tr.Latest.Format(time.RFC3339Nano), nil
-	}
-	if from != "" || to != "" {
-		return "", "", fmt.Errorf("--from and --to must both be specified")
-	}
-
-	return "", "", nil
+	return doQueryPlain(ctx, query, tr.since, tr.from, tr.to, outputFile, failEmpty, analyze)
 }
 
 func doQueryPlain(ctx context.Context, query, since, earliest, latest, outputFile string, failEmpty, analyze bool) error {

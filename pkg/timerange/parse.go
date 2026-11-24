@@ -14,38 +14,8 @@ type TimeRange struct {
 	Latest   time.Time
 }
 
-// ParseRelative parses relative time strings: "15m", "1h", "4h", "1d", "7d", "30d", "1w".
-// Returns the duration to subtract from now.
-func ParseRelative(s string) (time.Duration, error) {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if len(s) < 2 {
-		return 0, fmt.Errorf("invalid relative time: %q", s)
-	}
-	numStr := s[:len(s)-1]
-	unit := s[len(s)-1]
-	n, err := strconv.Atoi(numStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid relative time: %q: %w", s, err)
-	}
-	switch unit {
-	case 's':
-		return time.Duration(n) * time.Second, nil
-	case 'm':
-		return time.Duration(n) * time.Minute, nil
-	case 'h':
-		return time.Duration(n) * time.Hour, nil
-	case 'd':
-		return time.Duration(n) * 24 * time.Hour, nil
-	case 'w':
-		return time.Duration(n) * 7 * 24 * time.Hour, nil
-	default:
-		return 0, fmt.Errorf("unknown time unit: %c in %q", unit, s)
-	}
-}
-
-// ParseAbsolute parses absolute time strings in various formats.
-func ParseAbsolute(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
+// parseAbsolute reads s in the first absolute time layout that fits.
+func parseAbsolute(s string) (time.Time, bool) {
 	formats := []string{
 		time.RFC3339,
 		time.RFC3339Nano,
@@ -57,11 +27,11 @@ func ParseAbsolute(s string) (time.Time, error) {
 	}
 	for _, f := range formats {
 		if t, err := time.Parse(f, s); err == nil {
-			return t, nil
+			return t, true
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("unable to parse time: %q", s)
+	return time.Time{}, false
 }
 
 // A ParseError reports text that is not a time.
@@ -104,7 +74,7 @@ func parseNamed(name, s string, now time.Time) (time.Time, error) {
 		if r, ok := parseRelative(strings.ToLower(t), now); ok {
 			return r, nil
 		}
-	} else if a, err := ParseAbsolute(t); err == nil {
+	} else if a, ok := parseAbsolute(t); ok {
 		return a, nil
 	}
 
@@ -232,21 +202,4 @@ func snapTo(t time.Time, unit byte) (time.Time, bool) {
 	default:
 		return time.Time{}, false
 	}
-}
-
-// FromAbsoluteRange creates a TimeRange from --from/--to flag values.
-func FromAbsoluteRange(from, to string) (*TimeRange, error) {
-	earliest, err := ParseAbsolute(from)
-	if err != nil {
-		return nil, fmt.Errorf("parse --from: %w", err)
-	}
-	latest, err := ParseAbsolute(to)
-	if err != nil {
-		return nil, fmt.Errorf("parse --to: %w", err)
-	}
-
-	return &TimeRange{
-		Earliest: earliest,
-		Latest:   latest,
-	}, nil
 }

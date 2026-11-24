@@ -219,6 +219,12 @@ type unknownCommandError string
 
 func (e unknownCommandError) Error() string { return string(e) }
 
+// usageError reports flags that cannot be used together or a flag value
+// that is not valid; it exits with the usage code.
+type usageError string
+
+func (e usageError) Error() string { return string(e) }
+
 // Execute runs the root command and exits with an appropriate code.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
@@ -235,8 +241,9 @@ func Execute() {
 
 		code := exitGeneral
 		var unknown unknownCommandError
+		var usage usageError
 		switch {
-		case isRequiredFlagError(err), errors.As(err, &unknown):
+		case isRequiredFlagError(err), errors.As(err, &unknown), errors.As(err, &usage):
 			code = exitUsage
 		case isConnectionError(err):
 			code = exitConnection
