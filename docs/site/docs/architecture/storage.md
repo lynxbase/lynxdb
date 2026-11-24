@@ -121,7 +121,7 @@ The store attempts to flush outstanding writes at graceful shutdown. A process k
 
 ## Parts
 
-The current part format uses the `LXPT` magic and version 14. The reader requires the current version. A file puts chunks for consecutive blocks in order, with token-filter pages interleaved by group. The column directories are stored together after the data, followed by the footer and trailer.
+The current part format uses the `LXPT` magic and version 16. The reader requires the current version. A file puts chunks for consecutive blocks in order, with token-filter pages interleaved by group. The column directories are stored together after the data, followed by the footer and trailer.
 
 ```text
 [header]
