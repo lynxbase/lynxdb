@@ -56,19 +56,19 @@ func TestByteTableIDsAgreeWithID(t *testing.T) {
 				picked = append(picked, keys[row])
 			}
 		}
-		tagged := round%3 == 0
 		hashes := make([]uint64, len(picked))
 		want := make([]uint32, len(picked))
 		for i, k := range picked {
-			full := k
-			if tagged {
-				full = append([]byte{5}, k...)
-			}
-			hashes[i] = Hash(full)
-			want[i] = uint32(single.IDHashed(full, hashes[i]))
+			hashes[i] = Hash(k)
+			want[i] = uint32(single.IDHashed(k, hashes[i]))
 		}
 		got := make([]uint32, len(picked))
-		batched.IDs(got, hashes, &Keys{Data: data, Offsets: offsets, Rows: rows, Tag: 5, Tagged: tagged}, nil, 0)
+		// Half of the rounds have the table read a state of every key found.
+		var warm []int64
+		if round%4 >= 2 {
+			warm = make([]int64, 3*batched.Len())
+		}
+		batched.IDs(got, hashes, &Keys{Data: data, Offsets: offsets, Rows: rows}, warm, 3)
 		for i := range got {
 			if got[i] != want[i] {
 				t.Fatalf("round %d: key %d has id %d, want %d", round, i, got[i], want[i])
@@ -86,50 +86,6 @@ func TestByteTableIDsAgreeWithID(t *testing.T) {
 		if !bytes.Equal(batched.Key(id), single.Key(id)) || batched.KeyHash(id) != single.KeyHash(id) {
 			t.Fatalf("key %d is %q, want %q", id, batched.Key(id), single.Key(id))
 		}
-	}
-}
-
-func TestByteTablePartitionAndIDsOf(t *testing.T) {
-	a := mem.NewArena()
-	defer a.Free()
-	src, dst := NewByteTable(a), NewByteTable(a)
-	defer src.Release()
-	defer dst.Release()
-	const n = 30000
-	for i := 0; i < n; i++ {
-		src.ID([]byte(fmt.Sprintf("key-%d", i*31)))
-	}
-	// The other table holds every third key already, under other ids.
-	for i := n - 1; i >= 0; i -= 3 {
-		dst.ID([]byte(fmt.Sprintf("key-%d", i*31)))
-	}
-	const bits = 5
-	order, starts := src.Partition(make([]uint32, n), make([]uint32, 1<<bits+1), bits)
-	seen := make([]bool, n)
-	for p := 0; p < 1<<bits; p++ {
-		ids := order[starts[p]:starts[p+1]]
-		if len(ids) < n>>bits/2 {
-			t.Fatalf("partition %d holds %d of %d keys", p, len(ids), n)
-		}
-		for i, id := range ids {
-			if seen[id] || (i > 0 && ids[i-1] >= id) {
-				t.Fatalf("partition %d lists id %d twice or out of order", p, id)
-			}
-			seen[id] = true
-			if got := src.KeyHash(int(id)) >> 32 & (1<<bits - 1); got != uint64(p) {
-				t.Fatalf("id %d of partition %d has the bits of %d", id, p, got)
-			}
-		}
-		got := make([]uint32, len(ids))
-		dst.IDsOf(got, src, ids, nil, 0)
-		for i, id := range ids {
-			if !bytes.Equal(dst.Key(int(got[i])), src.Key(int(id))) {
-				t.Fatalf("id %d went to %q, want %q", id, dst.Key(int(got[i])), src.Key(int(id)))
-			}
-		}
-	}
-	if starts[1<<bits] != n || dst.Len() != n {
-		t.Fatalf("%d ids listed, %d keys merged, want %d", starts[1<<bits], dst.Len(), n)
 	}
 }
 

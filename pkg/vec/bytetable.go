@@ -21,12 +21,12 @@ const (
 	// doubling.
 	tableWideSlots = 1 << 18
 	// tableFingerprint is the most bits of a hash that a slot keeps beside
-	// an id, and tablePartition the bits below them that Partition reads;
+	// an id, and tablePartition the bits below them that PartitionOf reads;
 	// the bits that pick a slot are the lowest.
 	tableFingerprint = 16
 	tablePartition   = 16
-	// MaxTableKeys is the number of keys a ByteTable holds at most.
-	MaxTableKeys = 1 << 30
+	// tableMaxKeys is the number of keys a ByteTable holds at most.
+	tableMaxKeys = 1 << 30
 	// tableMaxPages is the number of pages that the place of a key can
 	// name.
 	tableMaxPages = 1 << (32 - tablePageBits)
@@ -116,10 +116,6 @@ func (t *ByteTable) Retained() int {
 // Len returns the number of distinct keys.
 func (t *ByteTable) Len() int { return t.n }
 
-// Full reports whether the keys take most of the pages a table can hold, or
-// most of the ids: the caller should then start another table.
-func (t *ByteTable) Full() bool { return len(t.pages) > tableMaxPages/2 || t.n > MaxTableKeys/2 }
-
 // Key returns the key with the given id.
 func (t *ByteTable) Key(id int) []byte {
 	return t.keyAt(t.locs[id>>tableChunkBits][id&(tableChunk-1)])
@@ -175,92 +171,19 @@ func (t *ByteTable) IDHashed(key []byte, h uint64) int {
 		return int(uint32(s)&idMask) - 1
 	}
 
-	return t.add(i, h, 0, false, key)
-}
-
-// find returns the id of key, or when the table does not hold it the empty
-// slot i that its probe ended at, as -i-1. It makes no call but the one that
-// compares the bytes, and so is the one to call for a lookup: a function
-// that could go on to add the key keeps more of its state out of registers.
-func (t *ByteTable) find(h uint64, key []byte) int {
-	mask := uint64(len(t.slots) - 1)
-	idMask := uint32(1)<<t.idBits - 1
-	want := uint32(h>>t.fpShift) << t.idBits
-	for i := h & mask; ; i = (i + 1) & mask {
-		s := t.slots[i]
-		if s == 0 {
-			return -int(i) - 1
-		}
-		if uint32(s)&^idMask != want {
-			continue
-		}
-		p := t.pages[s>>(32+tablePageBits)][s>>32&(tablePage-1):]
-		switch n := int(p[0]); {
-		case n >= 0x80:
-			if string(longKey(p)) != string(key) {
-				continue
-			}
-		case n != len(key) || string(p[1:1+n]) != string(key):
-			continue
-		}
-
-		return int(uint32(s)&idMask) - 1
-	}
-}
-
-// findTagged is find for the key that v is after the byte tag.
-func (t *ByteTable) findTagged(h uint64, tag byte, v []byte) int {
-	mask := uint64(len(t.slots) - 1)
-	idMask := uint32(1)<<t.idBits - 1
-	want := uint32(h>>t.fpShift) << t.idBits
-	for i := h & mask; ; i = (i + 1) & mask {
-		s := t.slots[i]
-		if s == 0 {
-			return -int(i) - 1
-		}
-		if uint32(s)&^idMask == want && sameKey(t.keyAt(uint32(s>>32)), tag, true, v) {
-			return int(uint32(s)&idMask) - 1
-		}
-	}
-}
-
-// id returns the id of the key that v is, after the byte tag when tagged is
-// set, and adds the key when the table does not hold it.
-func (t *ByteTable) id(h uint64, tag byte, tagged bool, v []byte) int {
-	var id int
-	if tagged {
-		id = t.findTagged(h, tag, v)
-	} else {
-		id = t.find(h, v)
-	}
-	if id < 0 {
-		id = t.add(uint64(-id-1), h, tag, tagged, v)
-	}
-
-	return id
-}
-
-func sameKey(key []byte, tag byte, tagged bool, v []byte) bool {
-	if !tagged {
-		return string(key) == string(v)
-	}
-
-	return len(key) == len(v)+1 && key[0] == tag && string(key[1:]) == string(v)
+	return t.add(i, h, key)
 }
 
 // add stores a key that the table does not hold, whose probe ended at the
 // empty slot i, and returns its id.
-func (t *ByteTable) add(i, h uint64, tag byte, tagged bool, v []byte) int {
-	size := len(v)
-	if tagged {
-		size++
-	}
+func (t *ByteTable) add(i, h uint64, key []byte) int {
+	size := len(key)
 	need := size + 1
 	if size >= 0x80 {
 		need = size + binary.MaxVarintLen32
 	}
 	id := t.n
-	if id >= MaxTableKeys {
+	if id >= tableMaxKeys {
 		panic("vec: a byte table holds no more keys")
 	}
 	if t.page >= len(t.pages) || t.at+need > len(t.pages[t.page]) {
@@ -275,11 +198,7 @@ func (t *ByteTable) add(i, h uint64, tag byte, tagged bool, v []byte) int {
 	} else {
 		at += binary.PutUvarint(p[at:], uint64(size))
 	}
-	if tagged {
-		p[at] = tag
-		at++
-	}
-	t.at = at + copy(p[at:], v)
+	t.at = at + copy(p[at:], key)
 	chunk, in := id>>tableChunkBits, id&(tableChunk-1)
 	if chunk == len(t.hashes) {
 		t.hashes = append(t.hashes, mem.Raw[uint64](t.arena, tableChunk, tableChunk))
@@ -353,14 +272,11 @@ func (t *ByteTable) grow() {
 }
 
 // Keys are the keys of a batch: key j is the bytes of Data from
-// Offsets[r] to Offsets[r+1], where r is Rows[j], or j when Rows is nil,
-// after the byte Tag when Tagged is set.
+// Offsets[r] to Offsets[r+1], where r is Rows[j], or j when Rows is nil.
 type Keys struct {
 	Data    []byte
 	Offsets []uint32
 	Rows    []uint32
-	Tag     byte
-	Tagged  bool
 }
 
 func (k *Keys) at(j int) []byte {
@@ -418,9 +334,8 @@ func (t *ByteTable) IDs(ids []uint32, hashes []uint64, keys *Keys, warm []int64,
 	t.touched = touched
 	// A key that the table lacks, or whose hash names another key first, is
 	// left to the lookup one by one.
-	tag, tagged := keys.Tag, keys.Tagged
 	for j, s := range cand {
-		if s != 0 && sameKey(t.keyAt(uint32(s>>32)), tag, tagged, keys.at(j)) {
+		if s != 0 && string(t.keyAt(uint32(s>>32))) == string(keys.at(j)) {
 			ids[j] = uint32(s)&idMask - 1
 
 			continue
@@ -428,80 +343,6 @@ func (t *ByteTable) IDs(ids []uint32, hashes []uint64, keys *Keys, warm []int64,
 		pending = append(pending, uint32(j))
 	}
 	for _, j := range pending {
-		ids[j] = uint32(t.id(hashes[j], tag, tagged, keys.at(int(j))))
+		ids[j] = uint32(t.IDHashed(keys.at(int(j)), hashes[j]))
 	}
-}
-
-// IDsOf sets ids[j] to the id that the table gives the key that src numbers
-// from[j], adding the keys the table does not hold in that order. With warm
-// set it also reads warm[from[j]*stride], as IDs does for the keys it finds.
-func (t *ByteTable) IDsOf(ids []uint32, src *ByteTable, from []uint32, warm []int64, stride int) {
-	const batch = 256
-	var hashes [batch]uint64
-	var places [batch]uint32
-	for len(from) > 0 {
-		n := min(batch, len(from))
-		for j, id := range from[:n] {
-			hashes[j], places[j] = src.hashes[id>>tableChunkBits][id&(tableChunk-1)], src.locs[id>>tableChunkBits][id&(tableChunk-1)]
-		}
-		// Reading a byte of every key first has the keys come into the
-		// cache side by side instead of one after another.
-		touched := t.touched
-		for j, loc := range places[:n] {
-			touched ^= uint64(src.pages[loc>>tablePageBits][loc&(tablePage-1)])
-			if warm != nil {
-				touched ^= uint64(warm[int(from[j])*stride])
-			}
-		}
-		t.touched = touched
-		for j, loc := range places[:n] {
-			ids[j] = uint32(t.id(hashes[j], 0, false, src.keyAt(loc)))
-		}
-		ids, from = ids[n:], from[n:]
-	}
-}
-
-// Partition lists the ids of the table by partition, the bits of a key's
-// hash that neither pick its slot nor tell it apart there: order receives
-// the ids, those of partition p from starts[p] to starts[p+1], in ascending
-// order. It returns order and starts, which must hold Len and 1<<bits+1
-// values.
-func (t *ByteTable) Partition(order, starts []uint32, bits uint) ([]uint32, []uint32) {
-	parts := 1 << bits
-	order, starts = order[:t.n], starts[:parts+1]
-	clear(starts)
-	shift, mask := uint(64-tableFingerprint-tablePartition), uint64(parts-1)
-	left := t.n
-	for _, chunk := range t.hashes {
-		chunk = chunk[:min(tableChunk, left)]
-		for _, h := range chunk {
-			starts[h>>shift&mask+1]++
-		}
-		if left -= len(chunk); left == 0 {
-			break
-		}
-	}
-	// starts[p+1] counts partition p; the running sum turns it into where
-	// the next id of p goes, which ends as where p+1 starts.
-	sum := uint32(0)
-	for p := 1; p <= parts; p++ {
-		count := starts[p]
-		starts[p] = sum
-		sum += count
-	}
-	id, left := uint32(0), t.n
-	for _, chunk := range t.hashes {
-		chunk = chunk[:min(tableChunk, left)]
-		for _, h := range chunk {
-			p := h>>shift&mask + 1
-			order[starts[p]] = id
-			starts[p]++
-			id++
-		}
-		if left -= len(chunk); left == 0 {
-			break
-		}
-	}
-
-	return order, starts
 }

@@ -16,9 +16,9 @@ const (
 
 // KeyPartitions is an append-only log of hashed byte records split by bits
 // of the hash, so a later pass can take one partition at a time and keep
-// its working set in cache. The bits are those that Partition of a ByteTable
-// reads, which a table that numbers the records of one partition leaves
-// free to tell its keys apart.
+// its working set in cache. The bits are those that a ByteTable which
+// numbers the records of one partition leaves free: it reads the ones below
+// to pick a slot and the ones above to tell its keys apart.
 type KeyPartitions struct {
 	arena *mem.Arena
 	mask  uint64
