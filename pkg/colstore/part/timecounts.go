@@ -232,6 +232,69 @@ func (p *Part) TimeCounts(i int, granule int64, dst []TimeCount) ([]TimeCount, i
 	return dst, 0
 }
 
+// NarrowTimeCounts appends to dst the rows of block i by bucket of time, in
+// the order of the buckets, in the narrowest buckets the block counts its
+// rows in, and returns them with the width of the buckets; a block without
+// a record returns a width of zero.
+func (p *Part) NarrowTimeCounts(i int, dst []TimeCount) ([]TimeCount, int64) {
+	record := p.narrowTimeRecord(i)
+	if record == nil {
+		return dst, 0
+	}
+	if counts, width, ok := parseTimeRecord(record, dst); ok {
+		return counts, width
+	}
+
+	return dst, 0
+}
+
+// narrowTimeRecord returns the record of block i in its narrowest buckets,
+// the last of the block's records, or nil when it has none.
+func (p *Part) narrowTimeRecord(i int) []byte {
+	if i < 0 || 2*i+1 >= len(p.timeCountAt) {
+		return nil
+	}
+	records := p.timeCounts[p.timeCountAt[2*i]:p.timeCountAt[2*i+1]]
+	var last []byte
+	for len(records) > 0 {
+		record, rest, ok := nextTimeRecord(records)
+		if !ok {
+			return nil
+		}
+		last, records = record, rest
+	}
+
+	return last
+}
+
+// NoneWithin reports whether the records of block i show that none of its
+// rows has a time from lo to hi, both included: no bucket that the range
+// meets holds a row. It is false for a block without a record.
+func (p *Part) NoneWithin(i int, lo, hi int64) bool {
+	record := p.narrowTimeRecord(i)
+	if record == nil || int(record[0]) >= len(timeWidths) || record[0] == 0 {
+		return false
+	}
+	width := timeWidths[record[0]]
+	r := reader{buf: record[1:]}
+	held := r.uvarint()
+	bucket := unzigzag(r.uvarint())
+	// Buckets come in order: the first that ends at lo or later decides.
+	first, last := floorDiv(lo, width), floorDiv(hi, width)
+	for ; held > 0; held-- {
+		bucket += int64(r.uvarint())
+		r.uvarint()
+		if r.bad {
+			return false
+		}
+		if bucket >= first {
+			return bucket > last
+		}
+	}
+
+	return true
+}
+
 // nextTimeRecord splits the record at the start of records from those that
 // follow it.
 func nextTimeRecord(records []byte) (record, rest []byte, ok bool) {

@@ -360,6 +360,12 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 					continue
 				}
+				// A block that the range cuts may hold no row inside it.
+				if (lo < minT || hi > maxT) && h.NoneWithin(i, minT, maxT) {
+					stats.SkippedByTime++
+
+					continue
+				}
 				if empty != nil && empty.Has(i) {
 					stats.SkippedAsEmpty++
 
