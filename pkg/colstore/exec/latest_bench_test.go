@@ -117,14 +117,15 @@ func renderedSet(res *exec.Result) string {
 // goroutine opens, which takes them one after another and so opens the
 // fewest that the data allows. LYNXDB_BENCH_LATEST_ROWS sets the events (4Mi
 // by default), LYNXDB_BENCH_LATEST_DAYS the days they cover (8),
-// LYNXDB_BENCH_LATEST_BLOCK_ROWS the rows of a block (2048),
-// LYNXDB_BENCH_LATEST_ONE_IN the posts for each that holds the word (700),
-// and LYNXDB_BENCH_LATEST_WORKERS the goroutines of the query (one per CPU).
+// LYNXDB_BENCH_LATEST_BLOCK_ROWS the rows of a block (1024, so that the
+// store has some four thousand of them), LYNXDB_BENCH_LATEST_ONE_IN the
+// posts for each that holds the word (250, a few to a block of posts), and
+// LYNXDB_BENCH_LATEST_WORKERS the goroutines of the query (one per CPU).
 func BenchmarkLatestRows(b *testing.B) {
 	rows := envOr(b, "LYNXDB_BENCH_LATEST_ROWS", 1<<22)
 	days := envOr(b, "LYNXDB_BENCH_LATEST_DAYS", 8)
-	blockRows := envOr(b, "LYNXDB_BENCH_LATEST_BLOCK_ROWS", 2048)
-	oneIn := envOr(b, "LYNXDB_BENCH_LATEST_ONE_IN", 700)
+	blockRows := envOr(b, "LYNXDB_BENCH_LATEST_BLOCK_ROWS", 1024)
+	oneIn := envOr(b, "LYNXDB_BENCH_LATEST_ONE_IN", 250)
 	opts := exec.Options{}
 	if os.Getenv("LYNXDB_BENCH_LATEST_WORKERS") != "" {
 		opts.Workers = envOr(b, "LYNXDB_BENCH_LATEST_WORKERS", 0)
