@@ -22,9 +22,9 @@ type Config struct {
 	// Dir holds one directory per index; an empty Dir keeps the database in
 	// a temporary directory that Close removes.
 	Dir string
-	// Store configures the store of every index; its sort key, time fields
-	// and partition span are the settings of an index created without its
-	// own.
+	// Store configures the store of every index; its sort key, time fields,
+	// partition span and the dictionaries of its parts are the settings of
+	// an index created without its own.
 	Store colstore.StoreOptions
 }
 

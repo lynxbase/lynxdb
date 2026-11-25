@@ -17,12 +17,16 @@ import (
 
 // Settings is the design of an index, fixed when the index is created: the
 // fields whose values order its rows, the fields its event times are taken
-// from, tried in their order, and the span of time whose events its
-// partitions keep apart, zero for one partition.
+// from, tried in their order, the span of time whose events its partitions
+// keep apart, zero for one partition, and whether its parts hold a
+// dictionary of their own for the string columns whose values repeat across
+// their blocks. PartDictionary is nil in settings that leave it unset and
+// never in those of an index.
 type Settings struct {
-	SortKey    []string
-	TimeFields []string
-	Partition  time.Duration
+	SortKey        []string
+	TimeFields     []string
+	Partition      time.Duration
+	PartDictionary *bool
 }
 
 // ErrSettings reports settings that an index cannot take.
@@ -96,7 +100,7 @@ func validPath(path string) error {
 }
 
 // fill returns the settings with the fields that s leaves unset, a nil
-// list or a zero partition, taken from defaults.
+// list, a zero partition or a nil part dictionary, taken from defaults.
 func (s Settings) fill(defaults Settings) Settings {
 	if s.SortKey == nil {
 		s.SortKey = defaults.SortKey
@@ -106,6 +110,9 @@ func (s Settings) fill(defaults Settings) Settings {
 	}
 	if s.Partition == 0 {
 		s.Partition = defaults.Partition
+	}
+	if s.PartDictionary == nil {
+		s.PartDictionary = defaults.PartDictionary
 	}
 
 	return s
@@ -122,14 +129,19 @@ func (want Settings) conflict(has Settings) string {
 		return fmt.Sprintf("time_fields %v, not %v", has.TimeFields, want.TimeFields)
 	case want.Partition != 0 && want.Partition != has.Partition:
 		return fmt.Sprintf("partition %s, not %s", has.Partition, want.Partition)
+	case want.PartDictionary != nil && *want.PartDictionary != has.partDictionary():
+		return fmt.Sprintf("part_dictionary %t, not %t", has.partDictionary(), *want.PartDictionary)
 	}
 
 	return ""
 }
 
+// partDictionary reports whether the settings ask for part dictionaries.
+func (s Settings) partDictionary() bool { return s.PartDictionary != nil && *s.PartDictionary }
+
 // storeSettings returns the settings that store options give an index.
 func storeSettings(o colstore.StoreOptions) Settings {
-	s := Settings{SortKey: slices.Clone(o.SortKey), Partition: max(o.Partition, 0)}
+	s := Settings{SortKey: slices.Clone(o.SortKey), Partition: max(o.Partition, 0), PartDictionary: &o.Part.Dictionary}
 	if o.TimeField != "" {
 		s.TimeFields = append(s.TimeFields, o.TimeField)
 	}
@@ -147,15 +159,18 @@ func storeSettings(o colstore.StoreOptions) Settings {
 // options returns base with the design of an index set to s.
 func (s Settings) options(base colstore.StoreOptions) colstore.StoreOptions {
 	base.SortKey, base.TimeField, base.TimeFields, base.Partition = s.SortKey, "", s.TimeFields, s.Partition
+	base.Part.Dictionary = s.partDictionary()
 
 	return base
 }
 
-// settingsFile is the form of the settings file.
+// settingsFile is the form of the settings file. A file without
+// part_dictionary is that of an index without part dictionaries.
 type settingsFile struct {
-	SortKey    []string `json:"sort_key"`
-	TimeFields []string `json:"time_fields"`
-	Partition  string   `json:"partition"`
+	SortKey        []string `json:"sort_key"`
+	TimeFields     []string `json:"time_fields"`
+	Partition      string   `json:"partition"`
+	PartDictionary bool     `json:"part_dictionary"`
 }
 
 // readSettings reads the settings of the index in dir.
@@ -175,7 +190,7 @@ func readSettings(dir string) (Settings, error) {
 	if err != nil {
 		return Settings{}, fmt.Errorf("%s: partition: %w", settingsName, err)
 	}
-	s := Settings{SortKey: f.SortKey, TimeFields: f.TimeFields, Partition: partition}
+	s := Settings{SortKey: f.SortKey, TimeFields: f.TimeFields, Partition: partition, PartDictionary: &f.PartDictionary}
 	if s.SortKey == nil {
 		s.SortKey = []string{}
 	}
@@ -198,7 +213,9 @@ func makeIndexDir(root, index string, s Settings) error {
 	if err := os.Mkdir(aside, 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(settingsFile{SortKey: s.SortKey, TimeFields: s.TimeFields, Partition: s.Partition.String()}, "", "  ")
+	data, err := json.MarshalIndent(settingsFile{
+		SortKey: s.SortKey, TimeFields: s.TimeFields, Partition: s.Partition.String(), PartDictionary: s.partDictionary(),
+	}, "", "  ")
 	if err != nil {
 		return err
 	}
