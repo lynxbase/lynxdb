@@ -32,10 +32,10 @@ func (p *pred) patterned() bool { return p.kind == predAny || p.op == OpMatch }
 
 // verdictsOf returns what predicate p gives for the strings of d, which the
 // first worker to ask makes.
-func (w *worker) verdictsOf(p *pred, d *part.Dictionary) (*verdicts, error) {
+func (w *worker) verdictsOf(p *pred, d *part.Dictionary) *verdicts {
 	key := verdictKey{p, d}
 	if v := w.judged[key]; v != nil {
-		return v, nil
+		return v
 	}
 	x := w.x
 	x.verdictMu.Lock()
@@ -65,7 +65,7 @@ func (w *worker) verdictsOf(p *pred, d *part.Dictionary) (*verdicts, error) {
 	}
 	w.judged[key] = v
 
-	return v, nil
+	return v
 }
 
 // passed reports whether the string of code, which was tested, passed.
@@ -155,13 +155,11 @@ func (w *worker) judge(p *pred, d *part.Dictionary, v *verdicts, codes []uint32)
 // block stores as codes of dictionary d, passes p: by what p gives for the
 // string of each code, which is tested once for the part.
 func (w *worker) evalCodes(p *pred, d *part.Dictionary, ref *part.ColumnRef, depth int) (verdict, error) {
-	v, err := w.verdictsOf(p, d)
-	if err != nil || v.none {
-		if err == nil {
-			w.ruledOut++
-		}
+	v := w.verdictsOf(p, d)
+	if v.none {
+		w.ruledOut++
 
-		return none, err
+		return none, nil
 	}
 	codes, _, err := w.rowCodes(p.path, ref, d)
 	if err != nil {
@@ -194,15 +192,14 @@ func (w *worker) anyCodes(p *pred, ref *part.ColumnRef, m []uint8) (bool, error)
 	if !ok {
 		return false, part.ErrCorrupt
 	}
-	v, err := w.verdictsOf(p, d)
-	if err != nil || v.none {
-		if err == nil {
-			w.ruledOut++
-		}
+	v := w.verdictsOf(p, d)
+	if v.none {
+		w.ruledOut++
 
-		return false, err
+		return false, nil
 	}
 	c := &w.anyCol
+	var err error
 	if w.packed, err = w.b.DecodeShared(ref, c, w.packed); err != nil {
 		return false, err
 	}
