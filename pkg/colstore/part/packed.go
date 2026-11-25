@@ -413,8 +413,12 @@ func (r *packedReader) readHead(src []byte, s *packScratch) ([]byte, error) {
 func (r *packedReader) put(out []byte, from, to int) {
 	stride, codes, table := r.stride, r.codes, r.table
 	var tail [16]byte
+	// A slot is its lead bits and then the bits of a string, so the steps of
+	// one string end where the next slot begins.
+	lead := uint64(r.lead)
+	bitPos := uint64(from) * uint64(r.slot)
 	for i := 0; i < to-from; i++ {
-		bitPos := uint64(from+i)*uint64(r.slot) + uint64(r.lead)
+		bitPos += lead
 		val := out[i*stride : (i+1)*stride]
 		copy(val, r.template)
 		for _, step := range r.schedule {
