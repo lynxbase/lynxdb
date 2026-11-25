@@ -187,7 +187,11 @@ func (a *aggWorker) stage(h uint64, tag byte, tagged bool, key []byte, words []i
 	}
 	a.staged.AddKey(h, tag, tagged, key, words, tail)
 	// What the worker holds for the codes of a part is of its share too.
-	if a.staged.Size()+a.coded.waiting() > stageBudget/len(x.workers) {
+	held := a.staged.Size()
+	if a.coded.part != nil {
+		held += a.coded.waiting()
+	}
+	if held > stageBudget/len(x.workers) {
 		a.unstage()
 	}
 }

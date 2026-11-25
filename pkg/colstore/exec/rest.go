@@ -215,8 +215,14 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 	}()
 	// What the rows take of part dictionaries is asked for in every block
 	// before a block is read.
-	if err := forEach(blocks, len(rs), func(slot, i int) { rs[slot].ahead(parts, picks[starts[i]:starts[i+1]]) }); err != nil {
-		return nil, nil, err
+	shares := false
+	for i := 0; i < blocks && !shares; i++ {
+		shares = parts[picks[starts[i]].loc>>44].Shares()
+	}
+	if shares {
+		if err := forEach(blocks, len(rs), func(slot, i int) { rs[slot].ahead(parts, picks[starts[i]:starts[i+1]]) }); err != nil {
+			return nil, nil, err
+		}
 	}
 	var failed atomic.Pointer[error]
 	err := forEach(blocks, len(rs), func(slot, i int) {
