@@ -118,8 +118,10 @@ func BenchmarkCodedColumns(b *testing.B) {
 			}
 			first, faults := time.Since(begin), pageFaults()-faults
 			want := digest(res)
-			b.Logf("%s; %d of %d blocks read, %d rows passed", want, res.Stats.Blocks,
-				res.Stats.Blocks+res.Stats.SkippedByTime+res.Stats.SkippedByToken+res.Stats.SkippedByKey, res.Stats.RowsMatched)
+			st := res.Stats
+			b.Logf("%s; %d of %d blocks read, %d rows passed; columns searched %d, spared by token %d, filtered by code %d, ruled out by a dictionary %d",
+				want, st.Blocks, st.Blocks+st.SkippedByTime+st.SkippedByToken+st.SkippedByKey, st.RowsMatched,
+				st.ColumnsSearched, st.ColumnsSkippedByToken, st.ColumnsFilteredByCode, st.ColumnsRuledOutByDictionary)
 			b.ReportAllocs()
 			b.ResetTimer()
 			before := cpuTime()
