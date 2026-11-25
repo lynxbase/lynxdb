@@ -330,7 +330,7 @@ func (x *execution) held() int64 {
 	}
 	for _, w := range x.workers {
 		if w != nil {
-			n += w.arena.Size() + w.held() + w.sink.held()
+			n += w.arena.Size() + w.held() + w.sink.held() + w.agg.coded.held()
 			if w.agg.table != nil {
 				n += w.agg.table.Retained()
 			}

@@ -186,7 +186,8 @@ func (a *aggWorker) stage(h uint64, tag byte, tagged bool, key []byte, words []i
 		a.staged = vec.NewKeyPartitions(a.w.arena, x.partBits)
 	}
 	a.staged.AddKey(h, tag, tagged, key, words, tail)
-	if a.staged.Size() > stageBudget/len(x.workers) {
+	// What the worker holds for the codes of a part is of its share too.
+	if a.staged.Size()+a.coded.waiting() > stageBudget/len(x.workers) {
 		a.unstage()
 	}
 }

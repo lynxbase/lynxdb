@@ -39,11 +39,14 @@ const (
 	// the groups it holds for the ranges of a part may take before it
 	// merges them into the ranges, logRepeats the number of them for every
 	// code of the part that it holds at most, since more would not find the
-	// ranges any warmer, and tallyRows the rows that it has room for in a
-	// range to begin with.
+	// ranges any warmer, and tallyRows the least rows that it has room for
+	// in a range.
 	logShare   = 4
 	logRepeats = 4
 	tallyRows  = 256
+	// markRows is the number of values that a worker holds for a range of
+	// the bits of a distinct count, which are in its cache after a few.
+	markRows = 2048
 	// maxOthers bounds the combinations of the other keys that a query
 	// numbers for the groups of a key of codes, and otherRepeats is the
 	// number of rows that a block must have for each of those it may hold.
@@ -56,19 +59,23 @@ const (
 	maxBitGroups = 1 << 12
 	bitsFloor    = 64 << 10
 	bitsPerRow   = 16
-	// bitsChunk is the number of words of those bits that are turned into
-	// strings at a time.
-	bitsChunk = 1 << 12
+	// bitRangeBits is the number of codes, as a power of two, whose bits
+	// share a range: a few kilobytes for every group.
+	bitRangeBits = 16
 )
 
 // minRangeGroups is the least number of groups that a range holds before
 // it hands them on.
 var minRangeGroups = 1 << 12
 
+// The tables of the ranges and the room of what waits for them are kept
+// between queries.
 var (
 	codeSlots mem.Sized[uint32]
 	codeKeys  mem.Sized[uint64]
 	bitWords  mem.Sized[uint64]
+	tallyRoom mem.Sized[uint32]
+	markRoom  mem.Sized[uint64]
 )
 
 // codedPart is what the workers of a query share of one part while they
@@ -97,11 +104,12 @@ type codedGroups struct {
 	last, single bool
 	// shift turns a code into the number of its range and spread that
 	// number into the partition of a worker's log; limit is the number of
-	// groups that a range holds before they are handed on, and held the
-	// number that a worker holds before it merges them into the ranges.
-	shift, spread uint
-	limit, held   int
-	ranges        []codeRange
+	// groups that a range holds before they are handed on, held the number
+	// that a worker holds before it merges them into the ranges, and room
+	// the rows that it holds for a range when it only counts them.
+	shift, spread     uint
+	limit, held, room int
+	ranges            []codeRange
 }
 
 // codeTable holds the groups of a range. Until many of its codes have one,
@@ -127,32 +135,42 @@ type codeRange struct {
 }
 
 // codedBits holds the codes that the groups of one distinct count have in a
-// part: a bit per code for every group, by the id that all workers share for
-// the group. Workers set the bits with atomic operations.
+// part: a bit per code for every group, in ranges of codes that workers
+// merge the codes of their rows into one at a time.
 type codedBits struct {
 	dict *part.Dictionary
 	d    int
+	// shift turns a code into the number of its range, and room is the
+	// number of values that a worker holds for a range before it merges
+	// what it holds into the ranges.
+	shift uint
+	room  int
+	// rows counts the rows that workers brought to the part for the count,
+	// and allowed is the number of groups that those rows let have bits:
+	// the groups that the query numbers below it.
+	rows    atomic.Int64
+	allowed atomic.Int32
+	ranges  []bitRange
+}
+
+// bitRange holds the bits of the codes of one range by the id that all
+// workers share for a group; a group has bits once a row of it was merged.
+type bitRange struct {
 	mu   sync.Mutex
 	maps [][]uint64
-	// held is the number of words of the bits, and rows the rows that
-	// workers brought to the part for the count.
-	held int
-	rows atomic.Int64
-	// pending counts the chunks of the bits that wait to be turned into
-	// strings.
-	pending atomic.Int32
+	_    [64]byte
 }
 
 // handover is what a part held when the scan left it and what waits to be
-// turned into strings: the groups of range r of its codes, or the words
-// from from to to of the bits of a distinct count.
+// turned into strings: the groups of range r of its codes, or the bits that
+// the groups of a distinct count have for range r.
 type handover struct {
-	groups   *codedGroups
-	table    codeTable
-	r        int
-	bits     *codedBits
-	from, to int
-	bytes    int64
+	groups *codedGroups
+	table  codeTable
+	r      int
+	bits   *codedBits
+	maps   [][]uint64
+	bytes  int64
 }
 
 // codedWorker is what one worker aggregates by the codes of the part it
@@ -169,9 +187,12 @@ type codedWorker struct {
 	part   *codedPart
 	groups *codedGroups
 	bits   []*codedBits
-	// maps holds, per distinct count, the bits of the groups that the
-	// worker has asked for, by the shared id of the group.
-	maps [][][]uint64
+	// marks holds, per distinct count and range of codes, the values that
+	// wait to be merged into the bits of the range: the code of each in
+	// the low half of a word and the shared id of its group in the high
+	// one; marked counts them per distinct count.
+	marks  [][][]uint64
+	marked []int
 	// log holds the groups that wait to be merged into the ranges of the
 	// part, by range: the code of each in the low half of what stands for
 	// the hash of a record, then the id of what its other keys hold when
@@ -179,9 +200,14 @@ type codedWorker struct {
 	log *vec.KeyPartitions
 	// tallies holds, per range, the codes of the rows that wait to be
 	// counted there, for a plan that counts the rows of every value of one
-	// key and nothing else; tallied is the number of those codes.
-	tallies [][]uint32
-	tallied int
+	// key and nothing else; tallied is the number of those codes, and
+	// tallyRoom the memory that the ranges of a part share out.
+	tallies   [][]uint32
+	tallied   int
+	tallyRoom []uint32
+	// markRoom is, per distinct count, the memory that the ranges of a
+	// part share out for the values that wait.
+	markRoom [][]uint64
 	// logged is the number of groups in the log.
 	logged int
 	// others holds, by the id that the query gives it, the key of what the
@@ -206,7 +232,8 @@ func (c *codedWorker) init(a *aggWorker) {
 		arg := &plan.args[i]
 		c.args[i] = len(arg.distinct) > 0 && len(arg.states) == 0 && !arg.numbers && !arg.picks && arg.expr.op == OpColumn
 	}
-	c.bits, c.maps = make([]*codedBits, plan.distinct), make([][][]uint64, plan.distinct)
+	c.bits, c.marks, c.marked = make([]*codedBits, plan.distinct), make([][][]uint64, plan.distinct), make([]int, plan.distinct)
+	c.markRoom = make([][]uint64, plan.distinct)
 }
 
 // open prepares the worker for a block: it leaves the part that the scan
@@ -264,6 +291,11 @@ func (c *codedWorker) leave() {
 		return
 	}
 	c.drain()
+	for d, cb := range c.bits {
+		if cb != nil {
+			c.set(d)
+		}
+	}
 	cp.mu.Lock()
 	cp.active--
 	var groups *codedGroups
@@ -274,11 +306,71 @@ func (c *codedWorker) leave() {
 	cp.mu.Unlock()
 	c.part, c.groups = nil, nil
 	clear(c.bits)
-	for d := range c.maps {
-		clear(c.maps[d])
-		c.maps[d] = c.maps[d][:0]
-	}
 	c.a.w.x.hand(groups, marked)
+}
+
+// release returns the memory that does not belong to the worker's arena.
+func (c *codedWorker) release() {
+	tallyRoom.Put(c.tallyRoom)
+	for _, room := range c.markRoom {
+		markRoom.Put(room)
+	}
+	c.tallyRoom, c.markRoom, c.tallies, c.marks = nil, nil, nil, nil
+}
+
+// held returns the bytes of the room that the worker has for what waits.
+func (c *codedWorker) held() int {
+	n := 4 * cap(c.tallyRoom)
+	for _, room := range c.markRoom {
+		n += 8 * cap(room)
+	}
+
+	return n
+}
+
+// waiting returns the bytes of what the worker holds for the ranges of its
+// part.
+func (c *codedWorker) waiting() int {
+	n := 4 * c.tallied
+	if c.log != nil {
+		n += c.log.Size()
+	}
+	for _, marked := range c.marked {
+		n += 8 * marked
+	}
+
+	return n
+}
+
+// each calls take for every one of n ranges that has something of the
+// worker's, while the worker holds the range: the ranges that no other
+// worker holds first, then the others as they come free.
+func (c *codedWorker) each(n int, has func(r int) bool, lock func(r int) *sync.Mutex, take func(r int)) {
+	a := c.a
+	x := a.w.x
+	// Workers start at different ranges, so that they meet less.
+	if a.order == 0 {
+		a.order = int(x.unstaged.Add(1))
+	}
+	first := (a.order - 1) * n / len(x.workers)
+	busy := a.s.busy[:0]
+	for i := 0; i < n; i++ {
+		r := (first + i) % n
+		if !has(r) {
+			continue
+		}
+		if mu := lock(r); mu.TryLock() {
+			locked(mu, take, r)
+		} else {
+			busy = append(busy, uint32(r))
+		}
+	}
+	for _, r := range busy {
+		mu := lock(int(r))
+		mu.Lock()
+		locked(mu, take, int(r))
+	}
+	a.s.busy = busy
 }
 
 // groupsFor returns the groups of the open part by the codes of dictionary
@@ -298,6 +390,17 @@ func (c *codedWorker) groupsFor(d *part.Dictionary, key int) *codedGroups {
 			c.log = vec.NewKeyPartitions(a.w.arena, maxRangeBits)
 			c.tallies = make([][]uint32, 1<<maxRangeBits)
 		}
+		if cg := c.groups; cg.room != 0 {
+			// The ranges of every part share out the same memory.
+			used := d.Len()>>cg.shift + 1
+			if cap(c.tallyRoom) < used*cg.room {
+				tallyRoom.Put(c.tallyRoom)
+				c.tallyRoom = tallyRoom.Get(used * cg.room)
+			}
+			for r := 0; r < used; r++ {
+				c.tallies[r] = c.tallyRoom[r*cg.room : r*cg.room : (r+1)*cg.room]
+			}
+		}
 	}
 	if c.groups.key != key {
 		return nil
@@ -315,13 +418,17 @@ func newCodedGroups(d *part.Dictionary, plan *aggPlan, key, workers int) *codedG
 		shift: uint(width - ranges), spread: uint(maxRangeBits - ranges), ranges: make([]codeRange, 1<<ranges),
 	}
 	cg.limit = max(minRangeGroups, stageBudget/4/len(cg.ranges)/(16+8*len(plan.words)))
-	// A group that waits takes its code and, unless it is a row to count,
-	// what a record of a log takes beside its words.
-	size := 4
-	if !cg.single || !plan.rowsOnly {
-		size = 16 + 8*len(plan.words)
+	share := stageBudget / workers / logShare
+	if cg.single && plan.rowsOnly {
+		// A row to count waits as its code, in the room of its range.
+		used := d.Len()>>cg.shift + 1
+		cg.room = max(min(share/4/used, logRepeats<<cg.shift), tallyRows)
+
+		return cg
 	}
-	cg.held = min(stageBudget/workers/logShare/size, logRepeats*d.Len()+tallyRows)
+	// A group that waits takes what a record of a log takes beside its
+	// words.
+	cg.held = min(share/(16+8*len(plan.words)), logRepeats*d.Len()+tallyRows)
 
 	return cg
 }
@@ -443,7 +550,7 @@ func (c *codedWorker) drain() {
 		return
 	}
 	a := c.a
-	if c.tallied != 0 {
+	if cg.room != 0 {
 		c.counts(cg)
 	}
 	if log.Size() == 0 {
@@ -470,58 +577,33 @@ func (cg *codedGroups) handOn(x *execution, r int) {
 // tally notes a row for each of codes, to be counted in the ranges of the
 // part once the worker holds its share of them.
 func (c *codedWorker) tally(cg *codedGroups, codes []uint32) {
-	a := c.a
 	shift, tallies := cg.shift, c.tallies
-	for _, code := range codes {
+	since := 0
+	for i, code := range codes {
 		r := code >> shift
 		held := tallies[r]
 		if len(held) == cap(held) {
-			held = append(mem.Raw[uint32](a.w.arena, 0, max(2*cap(held), tallyRows)), held...)
+			// The codes spread over the ranges, which fill together.
+			c.counts(cg)
+			held, since = tallies[r], i
 		}
 		held = held[:len(held)+1]
 		held[len(held)-1] = code
 		tallies[r] = held
 	}
-	if c.tallied += len(codes); c.tallied > cg.held {
-		c.counts(cg)
-	}
+	c.tallied += len(codes) - since
 }
 
 // counts adds the rows that the worker has noted to the groups of their
-// codes: in the ranges that no other worker holds first, then in the
-// others as they come free.
+// codes.
 func (c *codedWorker) counts(cg *codedGroups) {
-	a := c.a
-	x := a.w.x
-	if a.order == 0 {
-		a.order = int(x.unstaged.Add(1))
-	}
-	take := func(r int) {
-		cr := &cg.ranges[r]
-		cg.count(&cr.codeTable, r, c.tallies[r])
+	x := c.a.w.x
+	c.each(len(cg.ranges), func(r int) bool { return len(c.tallies[r]) != 0 }, func(r int) *sync.Mutex { return &cg.ranges[r].mu }, func(r int) {
+		cg.count(&cg.ranges[r].codeTable, r, c.tallies[r])
 		c.tallies[r] = c.tallies[r][:0]
 		cg.handOn(x, r)
-	}
-	n := len(cg.ranges)
-	first := (a.order - 1) * n / len(x.workers)
-	busy := a.s.busy[:0]
-	for i := 0; i < n; i++ {
-		r := (first + i) % n
-		if len(c.tallies[r]) == 0 {
-			continue
-		}
-		if mu := &cg.ranges[r].mu; mu.TryLock() {
-			locked(mu, take, r)
-		} else {
-			busy = append(busy, uint32(r))
-		}
-	}
-	for _, r := range busy {
-		mu := &cg.ranges[r].mu
-		mu.Lock()
-		locked(mu, take, int(r))
-	}
-	a.s.busy, c.tallied = busy, 0
+	})
+	c.tallied = 0
 }
 
 // count adds a row to the group of each of codes, which are of range r, in
@@ -699,7 +781,7 @@ func (a *aggWorker) codedValues(i int, ref *part.ColumnRef, d *part.Dictionary, 
 	arg := &a.plan.args[i]
 	c.enter()
 	for _, dc := range arg.distinct {
-		c.bitsFor(dc, d).rows.Add(int64(n))
+		c.bitsFor(dc, d).admit(n)
 	}
 	codes, valid, err := a.w.rowCodes(arg.expr.path, ref, d)
 	if err != nil {
@@ -710,8 +792,8 @@ func (a *aggWorker) codedValues(i int, ref *part.ColumnRef, d *part.Dictionary, 
 		gid, rows = a.compactValid(valid, t.gid, n, idx)
 		count = len(rows)
 	}
-	// A bit set for a block that is then read as strings changes nothing:
-	// the strings set it again.
+	// A value marked for a block that is then read as strings changes
+	// nothing: the strings count it again.
 	for _, dc := range arg.distinct {
 		if !c.mark(dc, t, codes, gid, rows, count) {
 			return false, nil
@@ -736,109 +818,123 @@ func (c *codedWorker) bitsFor(d int, dict *part.Dictionary) *codedBits {
 	}
 	cb := cp.bits[d]
 	if cb == nil {
-		cb = &codedBits{dict: dict, d: d}
+		cb = newCodedBits(dict, d, len(c.a.w.x.workers))
 		cp.bits[d] = cb
 	}
 	cp.mu.Unlock()
 	c.bits[d] = cb
+	if c.marks[d] == nil {
+		c.marks[d] = make([][]uint64, 1<<maxRangeBits)
+	}
+	// The ranges of every part share out the same memory.
+	used := dict.Len()>>cb.shift + 1
+	if cap(c.markRoom[d]) < used*cb.room {
+		markRoom.Put(c.markRoom[d])
+		c.markRoom[d] = markRoom.Get(used * cb.room)
+	}
+	for r := 0; r < used; r++ {
+		c.marks[d][r] = c.markRoom[d][r*cb.room : r*cb.room : (r+1)*cb.room]
+	}
 
 	return cb
 }
 
-// bitmap returns the bits of the codes that a group has in distinct count
-// d, or nil when the part does not keep them: for a group numbered beyond
-// those it counts by code, or when the bits would take more than the rows
-// brought to the part allow.
-func (c *codedWorker) bitmap(d int, group uint32) []uint64 {
-	held := c.maps[d]
-	if int(group) < len(held) && held[group] != nil {
-		return held[group]
-	}
-	if group >= maxBitGroups {
-		return nil
-	}
-	for int(group) >= len(held) {
-		held = append(held, nil)
-	}
-	c.maps[d] = held
-	cb := c.bits[d]
-	cb.mu.Lock()
-	for int(group) >= len(cb.maps) {
-		cb.maps = append(cb.maps, nil)
-	}
-	bm := cb.maps[group]
-	if bm == nil {
-		words := vec.BitmapWords(cb.dict.Len())
-		if size := 8 * int64(cb.held+words); size <= bitsFloor+bitsPerRow*cb.rows.Load() && size <= int64(stageBudget/8) {
-			bm = bitWords.Get(words)
-			clear(bm)
-			cb.maps[group], cb.held = bm, cb.held+words
-		}
-	}
-	cb.mu.Unlock()
-	held[group] = bm
+func newCodedBits(dict *part.Dictionary, d, workers int) *codedBits {
+	// A range has the bits of a word of codes at least.
+	width := bits.Len32(uint32(dict.Len()))
+	ranges := min(max(width-bitRangeBits, bits.Len(uint(4*workers-1))), maxRangeBits, max(width-6, 0))
+	cb := &codedBits{dict: dict, d: d, shift: uint(width - ranges), ranges: make([]bitRange, 1<<ranges)}
+	used := dict.Len()>>cb.shift + 1
+	cb.room = max(min(stageBudget/workers/logShare/8/used, markRows), tallyRows)
 
-	return bm
+	return cb
 }
 
-// mark sets, for distinct count d, the bit of the code of each of count
-// values in the bits of its group: the value of row rows[j], or of row j
-// when rows is nil, belongs to group gid[j]. It reports false when the part
-// does not keep the bits of one of the groups.
+// words returns the words of the bits of a range of a group.
+func (cb *codedBits) words() int { return (1<<cb.shift + 63) >> 6 }
+
+// admit notes that workers bring n more rows to the part for the count, and
+// lets as many groups have bits as the rows so far warrant: the bits of a
+// group take a bit for every code of the part.
+func (cb *codedBits) admit(n int) {
+	group := int64(cb.dict.Len()/8 + 8)
+	allowed := min((bitsFloor+bitsPerRow*cb.rows.Add(int64(n)))/group, int64(stageBudget/8)/group, maxBitGroups)
+	for {
+		was := cb.allowed.Load()
+		if int64(was) >= allowed || cb.allowed.CompareAndSwap(was, int32(allowed)) {
+			return
+		}
+	}
+}
+
+// mark notes, for distinct count d, the code of each of count values under
+// its group, to be set in the bits of the part once the worker holds its
+// share of them: the value of row rows[j], or of row j when rows is nil,
+// belongs to group gid[j]. It reports false when the part does not keep the
+// bits of one of the groups.
 func (c *codedWorker) mark(d int, t *target, codes, gid, rows []uint32, count int) bool {
-	if count == 0 {
-		return true
-	}
-	if t.gid == nil {
-		bm := c.bitmap(d, t.global[t.one])
-		if bm == nil {
+	cb := c.bits[d]
+	allowed, shift, marks := uint32(cb.allowed.Load()), cb.shift, c.marks[d]
+	since := 0
+	for j := 0; j < count; j++ {
+		id := t.global[t.one]
+		if t.gid != nil {
+			id = t.global[gid[j]]
+		}
+		if id >= allowed {
+			c.marked[d] += j - since
+
 			return false
-		}
-		if rows == nil {
-			for _, code := range codes[:count] {
-				setBit(bm, code)
-			}
-
-			return true
-		}
-		for _, r := range rows[:count] {
-			setBit(bm, codes[r])
-		}
-
-		return true
-	}
-	// The bits of a group that the worker has asked for before are found
-	// without a call.
-	held, global := c.maps[d], t.global
-	for j, g := range gid[:count] {
-		id := global[g]
-		var bm []uint64
-		if int(id) < len(held) {
-			bm = held[id]
-		}
-		if bm == nil {
-			if bm = c.bitmap(d, id); bm == nil {
-				return false
-			}
-			held = c.maps[d]
 		}
 		code := codes[j]
 		if rows != nil {
 			code = codes[rows[j]]
 		}
-		setBit(bm, code)
+		held := marks[code>>shift]
+		if len(held) == cap(held) {
+			// The codes spread over the ranges, which fill together.
+			c.set(d)
+			held, since = marks[code>>shift], j
+		}
+		held = held[:len(held)+1]
+		held[len(held)-1] = uint64(id)<<32 | uint64(code)
+		marks[code>>shift] = held
 	}
+	c.marked[d] += count - since
 
 	return true
 }
 
-// setBit sets the bit of code in bits that several workers set at once;
-// most codes were seen before, and reading their bit leaves its cache line
-// shared.
-func setBit(bm []uint64, code uint32) {
-	word, bit := &bm[code>>6], uint64(1)<<(code&63)
-	if atomic.LoadUint64(word)&bit == 0 {
-		atomic.OrUint64(word, bit)
+// set sets, in the bits of the part, the codes that the worker has marked
+// for distinct count d.
+func (c *codedWorker) set(d int) {
+	cb, marks := c.bits[d], c.marks[d]
+	c.each(len(cb.ranges), func(r int) bool { return len(marks[r]) != 0 }, func(r int) *sync.Mutex { return &cb.ranges[r].mu }, func(r int) {
+		cb.set(r, marks[r])
+		marks[r] = marks[r][:0]
+	})
+	c.marked[d] = 0
+}
+
+// set sets the bit of each of marks, which are of range r, in the bits of
+// its group.
+func (cb *codedBits) set(r int, marks []uint64) {
+	br := &cb.ranges[r]
+	base := uint32(r) << cb.shift
+	group, held := ^uint32(0), []uint64(nil)
+	for _, m := range marks {
+		if id := uint32(m >> 32); id != group {
+			for int(id) >= len(br.maps) {
+				br.maps = append(br.maps, nil)
+			}
+			if br.maps[id] == nil {
+				br.maps[id] = bitWords.Get(cb.words())
+				clear(br.maps[id])
+			}
+			group, held = id, br.maps[id]
+		}
+		at := uint32(m) - base
+		held[at>>6] |= 1 << (at & 63)
 	}
 }
 
@@ -860,15 +956,28 @@ func (x *execution) hand(cg *codedGroups, marked []*codedBits) {
 		if cb == nil {
 			continue
 		}
-		words := vec.BitmapWords(cb.dict.Len())
-		if cb.held == 0 || words == 0 {
-			continue
+		for r := range cb.ranges {
+			if maps := cb.ranges[r].maps; maps != nil {
+				x.push(handover{bits: cb, maps: maps, r: r, bytes: bitBytes(maps)})
+				cb.ranges[r].maps = nil
+			}
 		}
-		chunks := (words + bitsChunk - 1) / bitsChunk
-		cb.pending.Store(int32(chunks))
-		for from := 0; from < words; from += bitsChunk {
-			x.push(handover{bits: cb, from: from, to: min(from+bitsChunk, words), bytes: 8 * int64(cb.held/chunks)})
-		}
+	}
+}
+
+// bitBytes returns the bytes of the bits of the groups of a range.
+func bitBytes(maps [][]uint64) int64 {
+	n := 0
+	for _, held := range maps {
+		n += 8 * cap(held)
+	}
+
+	return int64(n)
+}
+
+func releaseBits(maps [][]uint64) {
+	for _, held := range maps {
+		bitWords.Put(held)
 	}
 }
 
@@ -923,21 +1032,10 @@ func (c *codedWorker) resolve(u *handover) error {
 
 		return err
 	}
-	cb := u.bits
-	err := c.resolveBits(cb, u.from, u.to)
-	if cb.pending.Add(-1) == 0 {
-		cb.release()
-	}
+	err := c.resolveBits(u.bits, u.maps, u.r)
+	releaseBits(u.maps)
 
 	return err
-}
-
-func (cb *codedBits) release() {
-	for i, bm := range cb.maps {
-		bitWords.Put(bm)
-		cb.maps[i] = nil
-	}
-	cb.held = 0
 }
 
 // resolveGroups stages the groups of t, the table of range r, under the
@@ -1015,25 +1113,26 @@ func (c *codedWorker) resolveGroup(cg *codedGroups, key uint64, state []int64) e
 }
 
 // resolveBits logs, for the distinct count of cb, the strings of the codes
-// from word from to word to of the bits of every group.
-func (c *codedWorker) resolveBits(cb *codedBits, from, to int) error {
+// of range r that maps, the bits of every group for the range, mark.
+func (c *codedWorker) resolveBits(cb *codedBits, maps [][]uint64, r int) error {
 	a := c.a
 	s := a.s
 	log := a.dlogs[cb.d]
 	seed := kindSeeds[vec.KindString]
+	base := uint32(r) << cb.shift
 	var lo, hi [64]uint64
 	var err error
-	for i := from; i < to; i++ {
+	for i := 0; i < cb.words(); i++ {
 		// A string is hashed once for all the groups that hold it.
 		hashed := uint64(0)
-		for group, bm := range cb.maps {
-			if bm == nil {
+		for group, held := range maps {
+			if held == nil {
 				continue
 			}
-			for word := bm[i]; word != 0; word &= word - 1 {
+			for word := held[i]; word != 0; word &= word - 1 {
 				b := bits.TrailingZeros64(word)
 				if hashed>>b&1 == 0 {
-					if s.value, err = cb.dict.Value(s.value[:0], uint32(i<<6|b)); err != nil {
+					if s.value, err = cb.dict.Value(s.value[:0], base+uint32(i<<6|b)); err != nil {
 						return err
 					}
 					lo[b], hi[b] = vec.Hash128(s.value)
@@ -1087,17 +1186,17 @@ func (x *execution) releaseCoded() {
 			}
 		}
 		for _, cb := range cp.bits {
-			if cb != nil {
-				cb.release()
+			if cb == nil {
+				continue
+			}
+			for r := range cb.ranges {
+				releaseBits(cb.ranges[r].maps)
 			}
 		}
 	}
 	for i := range x.queue {
-		if u := &x.queue[i]; u.groups != nil {
-			u.table.release()
-		} else if u.bits.pending.Add(-1) == 0 {
-			u.bits.release()
-		}
+		x.queue[i].table.release()
+		releaseBits(x.queue[i].maps)
 	}
 	x.coded, x.queue = nil, nil
 }

@@ -189,6 +189,7 @@ func (w *worker) release() {
 	if w.agg.table != nil {
 		w.agg.table.Release()
 	}
+	w.agg.coded.release()
 	w.arena.Free()
 	clear(w.refs)
 	for i := range w.views {
