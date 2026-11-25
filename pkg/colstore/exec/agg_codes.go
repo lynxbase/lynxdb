@@ -44,9 +44,10 @@ const (
 	logShare   = 4
 	logRepeats = 4
 	tallyRows  = 256
-	// markRows is the number of values that a worker holds for a range of
-	// the bits of a distinct count, which are in its cache after a few.
-	markRows = 2048
+	// markRows is the most values that a worker holds for a range of the
+	// bits of a distinct count: enough for the bits, which workers take
+	// turns to write, to come into its cache once for many values.
+	markRows = 1 << 13
 	// maxOthers bounds the combinations of the other keys that a query
 	// numbers for the groups of a key of codes, and otherRepeats is the
 	// number of rows that a block must have for each of those it may hold.
