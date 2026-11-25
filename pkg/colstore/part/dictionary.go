@@ -84,8 +84,10 @@ type Dictionary struct {
 	scratch                               packScratch
 	// sound has a bit for every page whose checksum was seen to match
 	// since the last Recheck, and asked is set once the kernel was asked
-	// for the sections ahead of reads of many strings.
+	// for the sections ahead of reads of many strings; wanted has a bit
+	// for every page that was asked for alone, ahead of reads of a few.
 	sound     []atomic.Uint64
+	wanted    []atomic.Uint64
 	asked     atomic.Bool
 	readAhead func(off, n int)
 }
@@ -156,6 +158,7 @@ func (p *Part) readDictionaries(r *reader, limit uint64) bool {
 			return false
 		}
 		d.sound = make([]atomic.Uint64, (d.dataLen+dictPage-1)/dictPage/64+1)
+		d.wanted = make([]atomic.Uint64, len(d.sound))
 		d.bind(p.data)
 		p.dicts[id] = d
 	}
@@ -205,8 +208,8 @@ func (d *Dictionary) Ahead(n int) {
 // aheadOf asks for the pages that reading the strings of codes takes, a few
 // codes whose strings lie far apart, so that the pages come together and
 // not one after another as they are read. It leaves out the pages that were
-// read since the last Recheck, which it takes to be in memory, and uses
-// spans as its scratch.
+// asked for so before, and those read since the last Recheck, which it
+// takes to be in memory, and uses spans as its scratch.
 func (d *Dictionary) aheadOf(codes []uint32, spans [][2]uint32) [][2]uint32 {
 	if d.readAhead == nil || d.asked.Load() {
 		return spans
@@ -214,7 +217,8 @@ func (d *Dictionary) aheadOf(codes []uint32, spans [][2]uint32) [][2]uint32 {
 	spans = spans[:0]
 	add := func(off, n uint64) {
 		for pg := off / dictPage; pg <= (off+n-1)/dictPage && pg < uint64(len(d.sound))*64; pg++ {
-			if d.sound[pg>>6].Load()>>(pg&63)&1 == 0 {
+			if bit := uint64(1) << (pg & 63); (d.sound[pg>>6].Load()|d.wanted[pg>>6].Load())&bit == 0 {
+				d.wanted[pg>>6].Or(bit)
 				spans = append(spans, [2]uint32{uint32(pg), uint32(pg) + 1})
 			}
 		}

@@ -142,27 +142,28 @@ func (d *Dictionary) fill(dst *vec.Column, codes []uint32, sparse bool, rows int
 	return nil
 }
 
-// DecodeRows is Decode for the rows listed, in any order: the other rows of
-// dst hold an unspecified value. Of a shared column it reads the strings of
-// those rows and no others, so that a few rows cost a few pages of the
-// dictionary and not most of them.
-func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error {
-	if !ref.Shared() {
-		return b.Decode(ref, dst)
+// pickedCodes returns the codes of the values that the rows listed hold of
+// the shared column of ref, whose dictionary is d, in the order of the rows,
+// which it sorts and returns without those listed twice. It fills dst with
+// which rows hold a value, and reads the codes of the listed rows alone
+// where the block packs them.
+func (b *Block) pickedCodes(ref *ColumnRef, d *Dictionary, rows []uint32, dst *vec.Column) (picked, codes []uint32, err error) {
+	chunk := b.data[ref.off : ref.off+ref.length]
+	if !b.checked(ref, chunk) {
+		return nil, nil, ErrCorrupt
 	}
-	d, _ := b.part.Dictionary(ref.PathID)
-	codes, err := b.DecodeShared(ref, dst, b.d.codes32)
-	b.d.codes32 = codes
-	if err != nil {
-		return err
+	dst.Kind, dst.Rows, dst.Layout, dst.Valid = ref.Kind, b.Rows, vec.Flat, nil
+	if ref.flags&flagSparse != 0 {
+		if chunk, err = b.readPresence(chunk, ref.Count, dst); err != nil {
+			return nil, nil, err
+		}
 	}
-	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
-	picked := append(b.pos[:0], rows...)
+	picked = append(b.pos[:0], rows...)
 	slices.Sort(picked)
+	picked = slices.Compact(picked)
 	b.pos = picked
-	// The strings of the rows lie on pages all over the dictionary, which
-	// are asked for together before the first is read.
-	b.picks = b.picks[:0]
+	// The number of the value of each row among those of the column.
+	codes = b.picks[:0]
 	for _, row := range picked {
 		r := int(row)
 		if r >= b.Rows || !dst.IsValid(r) {
@@ -171,16 +172,120 @@ func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error
 		if dst.Valid != nil {
 			r = dst.Valid.Rank(r)
 		}
-		b.picks = append(b.picks, codes[r])
+		codes = append(codes, uint32(r))
 	}
-	b.spans = d.aheadOf(b.picks, b.spans)
+	b.picks = codes
+	if !b.pickCodes(codes, chunk, ref.Count, uint64(d.codes)) {
+		return nil, nil, ErrCorrupt
+	}
+
+	return picked, codes, nil
+}
+
+// pickCodes replaces each of values, numbers of values of a column of count
+// values, by the code that the codes section src holds for it, all of which
+// are below limit, and reports whether the section is sound.
+func (b *Block) pickCodes(values []uint32, src []byte, count int, limit uint64) bool {
+	if len(src) < 2 {
+		return false
+	}
+	base, n := binary.Uvarint(src[1:])
+	if n <= 0 || base >= limit {
+		return false
+	}
+	if src[0] != sharedPacked {
+		// Runs are read whole: they are few.
+		all, ok := readSharedCodes(b.d.codes32, src, count, limit)
+		b.d.codes32 = all
+		for i, v := range values {
+			if ok = ok && int(v) < len(all); !ok {
+				return false
+			}
+			values[i] = all[v]
+		}
+
+		return ok
+	}
+	src = src[1+n:]
+	if len(src) == 0 || src[0] == 0 || src[0] > 32 || len(src)-1 != packedSize(count, uint(src[0])) {
+		return false
+	}
+	width := uint(src[0])
+	src = src[1:]
+	mask := uint64(1)<<width - 1
+	var tail [16]byte
+	for i, v := range values {
+		if int(v) >= count {
+			return false
+		}
+		bit := uint(v) * width
+		pos := int(bit >> 3)
+		word := src[pos:]
+		if len(word) < 8 {
+			clear(tail[:])
+			copy(tail[:], word)
+			word = tail[:]
+		}
+		code := binary.LittleEndian.Uint64(word)>>(bit&7)&mask + base
+		if code >= limit {
+			return false
+		}
+		values[i] = uint32(code)
+	}
+
+	return true
+}
+
+// AheadRows asks for the pages of the part dictionary that DecodeRows reads
+// for the rows listed of a column that the block stores as codes. A caller
+// about to read several such columns asks for all of them first, so that
+// their pages come together and not column after column.
+func (b *Block) AheadRows(ref *ColumnRef, rows []uint32) error {
+	if !ref.Shared() {
+		return nil
+	}
+	d, ok := b.part.Dictionary(ref.PathID)
+	if !ok {
+		return ErrCorrupt
+	}
+	if d.readAhead == nil || d.asked.Load() {
+		return nil
+	}
+	_, codes, err := b.pickedCodes(ref, d, rows, &b.present)
+	if err != nil {
+		return err
+	}
+	b.spans = d.aheadOf(codes, b.spans)
+
+	return nil
+}
+
+// DecodeRows is Decode for the rows listed, in any order: the other rows of
+// dst hold an unspecified value. Of a shared column it reads the codes and
+// the strings of those rows and no others, so that a few rows cost a few
+// pages of the dictionary and not most of them, and asks for those pages
+// together before it reads the first.
+func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error {
+	if !ref.Shared() {
+		return b.Decode(ref, dst)
+	}
+	d, ok := b.part.Dictionary(ref.PathID)
+	if !ok {
+		return ErrCorrupt
+	}
+	picked, codes, err := b.pickedCodes(ref, d, rows, dst)
+	if err != nil {
+		return err
+	}
+	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
+	b.spans = d.aheadOf(codes, b.spans)
 	data := dst.Data[:0]
 	dst.Offsets = grow(dst.Offsets, b.Rows+1)
 	offsets := dst.Offsets
-	at := 0
+	at, next := 0, 0
 	for _, row := range picked {
 		r := int(row)
-		if r >= b.Rows || r < at {
+		if r >= b.Rows {
 			continue
 		}
 		for ; at <= r; at++ {
@@ -189,13 +294,10 @@ func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error
 		if !dst.IsValid(r) {
 			continue
 		}
-		value := r
-		if dst.Valid != nil {
-			value = dst.Valid.Rank(r)
-		}
-		if data, err = d.Value(data, codes[value]); err != nil {
+		if data, err = d.Value(data, codes[next]); err != nil {
 			return err
 		}
+		next++
 	}
 	for ; at <= b.Rows; at++ {
 		offsets[at] = uint32(len(data))

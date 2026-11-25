@@ -25,8 +25,10 @@ func (a *asked) covers(off, n int) bool {
 // checkRowsAskedTogether reads a few rows of every block of p alone and
 // requires that every page of dictionary d read for them was asked for
 // before, in few requests, and that rows whose pages were read are not
-// asked for again.
-func checkRowsAskedTogether(t *testing.T, p *Part, d *Dictionary, path string) {
+// asked for again. With ahead set the pages are asked for before the rows
+// are read, as a caller with several columns to read does, and reading the
+// rows then asks for nothing.
+func checkRowsAskedTogether(t *testing.T, p *Part, d *Dictionary, path string, ahead bool) {
 	t.Helper()
 	id, _ := p.PathID(path)
 	var requests asked
@@ -51,8 +53,20 @@ func checkRowsAskedTogether(t *testing.T, p *Part, d *Dictionary, path string) {
 		}
 		p.ForgetReadAhead()
 		requests.spans = requests.spans[:0]
+		if ahead {
+			if err := b.AheadRows(ref, rows); err != nil {
+				t.Fatal(err)
+			}
+			if pagesRead(d) != 0 && d.liveLen == 0 {
+				t.Fatalf("block %d: asking for the pages of the rows read %d of them", i, pagesRead(d))
+			}
+		}
+		asked := len(requests.spans)
 		if err := b.DecodeRows(ref, rows, &picked); err != nil {
 			t.Fatal(err)
+		}
+		if ahead && (asked == 0 || len(requests.spans) != asked) {
+			t.Fatalf("block %d: %d requests ahead of the rows and %d while reading them", i, asked, len(requests.spans)-asked)
 		}
 		for _, row := range rows {
 			if picked.IsValid(int(row)) != all.IsValid(int(row)) ||
@@ -95,7 +109,8 @@ func TestStringsOfPickedRowsAreAskedForTogether(t *testing.T) {
 	if !ok || d.dataLen < 64*dictPage {
 		t.Fatal("no dictionary of many pages")
 	}
-	checkRowsAskedTogether(t, p, d, "did")
+	checkRowsAskedTogether(t, p, d, "did", false)
+	checkRowsAskedTogether(t, p, d, "did", true)
 }
 
 func TestStringsOfPickedRowsAreAskedForTogetherWhereCodesLackStrings(t *testing.T) {
@@ -115,5 +130,6 @@ func TestStringsOfPickedRowsAreAskedForTogetherWhereCodesLackStrings(t *testing.
 	if d == nil || d.liveLen == 0 {
 		t.Fatal("no dictionary whose codes lack strings")
 	}
-	checkRowsAskedTogether(t, whole, d, "did")
+	checkRowsAskedTogether(t, whole, d, "did", false)
+	checkRowsAskedTogether(t, whole, d, "did", true)
 }

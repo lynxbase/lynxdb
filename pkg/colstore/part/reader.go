@@ -517,6 +517,10 @@ func (p *Part) FilterBytes() int64 {
 	return n
 }
 
+// Shares reports whether the part has a dictionary, so that blocks of it
+// may store columns as its codes.
+func (p *Part) Shares() bool { return len(p.dicts) != 0 }
+
 // NumBlocks returns the number of blocks.
 func (p *Part) NumBlocks() int { return len(p.index) / indexEntrySize }
 
@@ -904,6 +908,9 @@ func (p *Part) ForgetReadAhead() {
 	for _, d := range p.dicts {
 		if d != nil {
 			d.asked.Store(false)
+			for i := range d.wanted {
+				d.wanted[i].Store(0)
+			}
 		}
 	}
 	p.Recheck()
