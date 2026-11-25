@@ -59,7 +59,8 @@ func latestStore(b testing.TB, dir string, rows, days, blockRows, oneIn int, sor
 // latestQueries are plans that keep the first rows or groups by time, as
 // PPL: of a word that few rows of a block hold, of every row, of one
 // collection, of the account with the most events, of a window of time, and
-// the accounts with the earliest posts.
+// the accounts with the earliest posts. Those of the time alone read no
+// other field of the rows they keep, which takes a block for each row.
 func latestQueries(b testing.TB, snap *colstore.Snapshot) []struct{ name, text string } {
 	b.Helper()
 	const posts = `kind = 'commit' and commit.operation = 'create' and commit.collection = 'app.bsky.feed.post'`
@@ -87,7 +88,9 @@ func latestQueries(b testing.TB, snap *colstore.Snapshot) []struct{ name, text s
 		{"latest of a word", `source=bluesky | where ` + word + ` | sort - _time | head 100`},
 		{"earliest of a word", `source=bluesky | where ` + word + ` | sort _time | head 100`},
 		{"latest of a word, ten", `source=bluesky | where ` + word + ` | sort - _time | head 10`},
+		{"latest of a word, the time alone", `source=bluesky | where ` + word + ` | fields _time | sort - _time | head 100`},
 		{"latest", `source=bluesky | sort - _time | head 100`},
+		{"latest, the time alone", `source=bluesky | fields _time | sort - _time | head 100`},
 		{"latest of a collection", `source=bluesky | where commit.collection = 'app.bsky.feed.post' | sort - _time | head 100`},
 		{"latest of an account", `source=bluesky | where did = '` + did + `' | sort - _time | head 100`},
 		{"latest of a window", `source=bluesky | where ` + window + ` | sort - _time | head 100`},
