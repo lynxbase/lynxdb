@@ -1,12 +1,14 @@
 package exec
 
 import (
+	"math/bits"
+	"unsafe"
+
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
-	"unsafe"
 )
 
 const (
@@ -41,6 +43,13 @@ type scratch struct {
 	// when that was decoded without the values, as seenOK marks.
 	seen   []vec.Column
 	seenOK []bool
+	// codes holds, per path, the codes that the open block stores of the
+	// string column at the path where it stores codes of the dictionary of
+	// its part, one per row, as codesOK marks; packed holds the codes of a
+	// column as the block has them, one per value.
+	codes   [][]uint32
+	codesOK []bool
+	packed  []uint32
 	// views show the rows of a window of a shared block, a view per column
 	// slot that viewed marks as set for the open window.
 	views  []vec.Window
@@ -130,6 +139,11 @@ func newWorker(x *execution) *worker {
 	clear(s.used)
 	s.seen, s.seenOK = fit(s.seen, slots), fit(s.seenOK, slots)
 	clear(s.seenOK)
+	s.codes, s.codesOK, s.packed = fit(s.codes, len(q.paths)), fit(s.codesOK, len(q.paths)), s.packed[:0]
+	clear(s.codesOK)
+	for i := range s.codes {
+		s.codes[i] = s.codes[i][:0]
+	}
 	s.outs, s.opers, s.vals = fit(s.outs, q.slots), s.opers[:0], s.vals[:0]
 	s.sels = fit(s.sels, q.depth+3)
 	s.ints = fit(s.ints, q.depth+3)
@@ -225,6 +239,10 @@ func (w *worker) held() int {
 	for i := range w.seen {
 		n += w.seen[i].Retained()
 	}
+	for i := range w.codes {
+		n += 4 * used(w.codes[i])
+	}
+	n += 4 * used(w.packed)
 	for i := range w.outs {
 		n += w.outs[i].held()
 	}
@@ -259,6 +277,65 @@ func (w *worker) open(p *part.Part, b *part.Block) {
 	w.b, w.rows, w.decoded = b, b.Rows, false
 	clear(w.state)
 	clear(w.seenOK)
+	clear(w.codesOK)
+}
+
+// dictionary returns the dictionary of the open part whose codes the open
+// block stores in place of the strings at path, or nil when the block has
+// the strings themselves or none.
+func (w *worker) dictionary(path int) (*part.Dictionary, *part.ColumnRef) {
+	if w.shared != nil {
+		return nil, nil
+	}
+	ref := w.ref(path, vec.KindString)
+	if ref == nil || !ref.Shared() {
+		return nil, nil
+	}
+	d, ok := w.p.Dictionary(ref.PathID)
+	if !ok {
+		return nil, nil
+	}
+
+	return d, ref
+}
+
+// rowCodes returns the code that every row of the open block has in d, the
+// dictionary of the string column at path, and which rows hold a value, nil
+// when all do. A row without one has the code d.Len(), which no string has.
+// It reads no string.
+func (w *worker) rowCodes(path int, ref *part.ColumnRef, d *part.Dictionary) ([]uint32, vec.Bitmap, error) {
+	s := path*kindSlots + int(vec.KindString) - 1
+	if w.codesOK[path] {
+		return w.codes[path], w.seen[s].Valid, nil
+	}
+	var err error
+	if w.packed, err = w.b.DecodeShared(ref, &w.seen[s], w.packed); err != nil {
+		return nil, nil, err
+	}
+	w.seenOK[s], w.decoded = true, true
+	valid := w.seen[s].Valid
+	if valid == nil {
+		w.codes[path], w.packed = w.packed, w.codes[path]
+	} else {
+		out := sized(w.codes[path], w.rows)
+		w.codes[path] = out
+		none := uint32(d.Len())
+		for i := range out {
+			out[i] = none
+		}
+		v := 0
+		for i, word := range valid {
+			for ; word != 0 && v < len(w.packed); word &= word - 1 {
+				if r := i<<6 | bits.TrailingZeros64(word); r < len(out) {
+					out[r] = w.packed[v]
+				}
+				v++
+			}
+		}
+	}
+	w.codesOK[path] = true
+
+	return w.codes[path], valid, nil
 }
 
 // ref returns the block's column of kind at path, or nil when no row holds

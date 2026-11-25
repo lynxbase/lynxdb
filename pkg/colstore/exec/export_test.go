@@ -36,6 +36,16 @@ func SetStageBudget(bytes int) (restore func()) {
 	return func() { stageBudget = old }
 }
 
+// SetRangeGroups changes the number of groups that a range of the codes of
+// a part holds before it hands them on, and returns a function that
+// restores it.
+func SetRangeGroups(groups int) (restore func()) {
+	old := minRangeGroups
+	minRangeGroups = groups
+
+	return func() { minRangeGroups = old }
+}
+
 // DistinctHash returns the hash that ApproxDistinct gives a value.
 func DistinctHash(v Value) uint64 {
 	switch v.Kind {

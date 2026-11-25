@@ -3,6 +3,7 @@ package exec
 import (
 	"math"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -35,6 +36,8 @@ const (
 	partBytes
 	// partRows: anything else, read row by row.
 	partRows
+	// partShared: a code of the dictionary of the part per row.
+	partShared
 )
 
 // keyPart is how one key expression presents itself in a block.
@@ -71,6 +74,14 @@ type keyPart struct {
 	// that was read so.
 	counts []uint32
 	held   vec.Column
+	// codes holds the code of every row of a partShared in dict, the
+	// dictionary of the part; a row without the key has the code that
+	// follows the last one. wide is set when the dictionary has more codes
+	// than a block resolves through a table: the part then takes one code
+	// among those of the other keys, and its rows are grouped by its own.
+	codes []uint32
+	dict  *part.Dictionary
+	wide  bool
 
 	buf  []int64
 	vbuf []uint8
@@ -120,6 +131,15 @@ type aggScratch struct {
 	// and busy lists the partitions that another worker held meanwhile.
 	lookup lookup
 	busy   []uint32
+
+	// wide is the key that the open block groups by the codes of the
+	// dictionary of its part, or -1; picked holds those codes for the
+	// selected rows, ckeys the key of every group of the block and value a
+	// string of the dictionary.
+	wide   int
+	picked []uint32
+	ckeys  []uint64
+	value  []byte
 }
 
 // empty truncates every buffer, so that held counts the ones a query fills.
@@ -128,6 +148,7 @@ func (s *aggScratch) empty() {
 	s.codes, s.tmp, s.key, s.rec, s.dense, s.fl = s.codes[:0], s.tmp[:0], s.key[:0], s.rec[:0], s.dense[:0], s.fl[:0]
 	s.hashes = s.hashes[:0]
 	s.lkeys, s.lends, s.lrows, s.lhash, s.lwords, s.lglobal = s.lkeys[:0], s.lends[:0], s.lrows[:0], s.lhash[:0], s.lwords[:0], s.lglobal[:0]
+	s.picked, s.ckeys, s.value = s.picked[:0], s.ckeys[:0], s.value[:0]
 	for i := range s.parts {
 		s.parts[i].buf, s.parts[i].vbuf = s.parts[i].buf[:0], s.parts[i].vbuf[:0]
 	}
@@ -139,7 +160,8 @@ func (s *aggScratch) empty() {
 func (s *aggScratch) held() int {
 	n := 4*(used(s.gid)+used(s.gid2)+used(s.idx2)+used(s.hist)+used(s.cache)+used(s.lends)+used(s.lrows)+used(s.lglobal)) +
 		2*(used(s.codes)+used(s.tmp)) + used(s.key) + used(s.rec) + used(s.lkeys) +
-		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords)+used(s.hashes)) + s.lookup.held() + 4*cap(s.busy)
+		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords)+used(s.hashes)) + s.lookup.held() + 4*cap(s.busy) +
+		4*used(s.picked) + 8*used(s.ckeys) + used(s.value)
 	for i := range s.parts {
 		n += 8*used(s.parts[i].buf) + used(s.parts[i].vbuf)
 	}
@@ -196,6 +218,12 @@ type aggWorker struct {
 	counted   int
 	// times is the time column of the open block for picks by time.
 	times *vec.Column
+	// coded is what the worker aggregates by the codes of part
+	// dictionaries.
+	coded codedWorker
+	// err is what kept a string of a dictionary from being read where
+	// nothing returns an error.
+	err error
 }
 
 func (a *aggWorker) init(w *worker) {
@@ -216,6 +244,7 @@ func (a *aggWorker) init(w *worker) {
 		a.words = append(mem.Grow(w.arena, a.words, a.stride), a.plan.init...)
 		a.groups = 1
 	}
+	a.coded.init(a)
 }
 
 // group returns the worker's number for the group with the encoded key.
@@ -255,6 +284,9 @@ func (a *aggWorker) spill() {
 // block aggregates the n selected rows of the open block, the rows listed
 // in idx or every row when idx is nil.
 func (a *aggWorker) block(n int, idx []uint32) error {
+	if err := a.coded.open(); err != nil {
+		return err
+	}
 	if len(a.plan.keys) == 0 {
 		return a.feed(&target{words: a.words, global: a.one[:]}, n, idx)
 	}
@@ -262,7 +294,21 @@ func (a *aggWorker) block(n int, idx []uint32) error {
 	if err != nil {
 		return err
 	}
-	if !codes {
+	if a.s.wide >= 0 && codes {
+		if done, err := a.codedBlock(n, idx, domain); done || err != nil {
+			return err
+		}
+	}
+	if a.s.wide >= 0 || !codes {
+		// The keys are read row by row, a column of codes as its strings.
+		for k, e := range a.plan.keys {
+			if p := &a.s.parts[k]; p.mode == partShared {
+				if err := a.spell(e, p); err != nil {
+					return err
+				}
+			}
+		}
+
 		return a.byRow(n, idx)
 	}
 	switch {
@@ -295,6 +341,9 @@ func (a *aggWorker) block(n int, idx []uint32) error {
 	if a.groups > maxTableGroups || (a.table != nil && a.table.Full()) {
 		a.spill()
 	}
+	if err == nil {
+		err, a.err = a.err, nil
+	}
 
 	return err
 }
@@ -304,10 +353,22 @@ func (a *aggWorker) block(n int, idx []uint32) error {
 // such codes there are.
 func (a *aggWorker) classify(n int, idx []uint32) (codes bool, domain int, err error) {
 	codes, domain = true, 1
+	a.s.wide = -1
 	for k, e := range a.plan.keys {
 		p := &a.s.parts[k]
 		if err := a.classifyKey(e, p, n, idx); err != nil {
 			return false, 0, err
+		}
+		if p.wide {
+			// One key of a block is grouped by its codes; another that
+			// could be is read as its strings.
+			if a.s.wide >= 0 {
+				if err := a.spell(e, p); err != nil {
+					return false, 0, err
+				}
+			} else {
+				a.s.wide = k
+			}
 		}
 		if p.mode == partBytes || p.mode == partRows {
 			codes = false
@@ -330,7 +391,7 @@ func (a *aggWorker) classify(n int, idx []uint32) (codes bool, domain int, err e
 func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error {
 	w := a.w
 	p.mode, p.col, p.val, p.card, p.nullable, p.one, p.valid, p.dense, p.computed = partRows, nil, nil, 1, false, false, nil, false, false
-	p.counts = p.counts[:0]
+	p.counts, p.codes, p.dict, p.wide = p.counts[:0], nil, nil, false
 	// Rows without a value, null or missing, have the null key.
 	p.step, p.absent = 1, tagNull
 	if e.op != OpColumn {
@@ -391,21 +452,13 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 
 			break
 		}
-		c, err := w.column(e.path, kind)
-		if err != nil {
-			return err
+		if a.coded.keys && kind == vec.KindString && w.state[e.path*kindSlots+int(kind)-1] != slotDecoded {
+			if d, ref := w.dictionary(e.path); d != nil {
+				return a.classifyShared(e, p, ref, d, n)
+			}
 		}
-		p.col, p.nullable = c, c.Valid != nil
-		switch c.Layout {
-		case vec.Const:
-			p.mode, p.val, p.card = partConst, c.DictValue(0), 1
-		case vec.Dict:
-			p.mode, p.card = partDict, c.DictLen()
-		default:
-			p.mode = partBytes
 
-			return nil
-		}
+		return a.spell(e, p)
 	case vec.KindInt:
 		if uint64(ref.MaxInt)-uint64(ref.MinInt) >= maxCodes {
 			break
@@ -435,6 +488,55 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 	if p.nullable {
 		p.card++
 	}
+
+	return nil
+}
+
+// spell presents the key e, a column of strings or variants, by the values
+// that its rows hold.
+func (a *aggWorker) spell(e *sexpr, p *keyPart) error {
+	c, err := a.w.column(e.path, p.kind)
+	if err != nil {
+		return err
+	}
+	p.col, p.nullable, p.card, p.wide, p.codes, p.dict = c, c.Valid != nil, 1, false, nil, nil
+	switch c.Layout {
+	case vec.Const:
+		p.mode, p.val = partConst, c.DictValue(0)
+	case vec.Dict:
+		p.mode, p.card = partDict, c.DictLen()
+	default:
+		p.mode = partBytes
+
+		return nil
+	}
+	if p.nullable {
+		p.card++
+	}
+
+	return nil
+}
+
+// classifyShared presents the key e, which the open block stores as codes
+// of the dictionary d of its part, by those codes. Few codes resolve
+// through a table as the entries of a block's own dictionary do; of many,
+// the rows are grouped by code in what the workers share of the part.
+func (a *aggWorker) classifyShared(e *sexpr, p *keyPart, ref *part.ColumnRef, d *part.Dictionary, n int) error {
+	codes, valid, err := a.w.rowCodes(e.path, ref, d)
+	if err != nil {
+		return err
+	}
+	p.mode, p.codes, p.dict, p.nullable = partShared, codes, d, valid != nil
+	card := d.Len()
+	if p.nullable {
+		card++
+	}
+	if card <= maxCodes && (card <= fewCodes || codeRepeats*card <= n) {
+		p.card = card
+
+		return nil
+	}
+	p.wide = true
 
 	return nil
 }
@@ -571,6 +673,19 @@ func (a *aggWorker) partCodes(p *keyPart, dst []uint16, idx []uint32) {
 	}
 	null := uint16(p.card - 1)
 	switch p.mode {
+	case partShared:
+		// A row without the key has the code that stands for none.
+		if idx == nil {
+			for j, c := range p.codes[:len(dst)] {
+				dst[j] = uint16(c)
+			}
+		} else {
+			for j, r := range idx {
+				dst[j] = uint16(p.codes[r])
+			}
+		}
+
+		return
 	case partConst:
 		clear(dst)
 	case partDict:
@@ -657,22 +772,33 @@ func (a *aggWorker) codeKey(code int) ([]byte, uint64) {
 	}
 	key := s.key[:0]
 	for k := range parts {
-		p := &parts[k]
-		last := k == len(parts)-1
-		switch {
-		case p.mode == partNull, p.nullable && pc[k] == p.card-1:
-			key = append(key, p.absent)
-		case p.mode == partConst:
-			key = appendKeyBytes(key, bytesTag(p.kind), p.val, last)
-		case p.mode == partDict:
-			key = appendKeyBytes(key, bytesTag(p.kind), p.col.DictValue(pc[k]), last)
-		default:
-			key = appendKeyInt(key, p.lo+int64(pc[k])*p.step)
-		}
+		key = a.appendCode(key, &parts[k], pc[k], k == len(parts)-1)
 	}
 	s.key = key
 
 	return key, keyHash(key)
+}
+
+// appendCode appends the value that code c of a key stands for, as a key
+// encodes it.
+func (a *aggWorker) appendCode(key []byte, p *keyPart, c int, last bool) []byte {
+	switch {
+	case p.mode == partNull, p.nullable && c == p.card-1:
+		return append(key, p.absent)
+	case p.mode == partConst:
+		return appendKeyBytes(key, bytesTag(p.kind), p.val, last)
+	case p.mode == partDict:
+		return appendKeyBytes(key, bytesTag(p.kind), p.col.DictValue(c), last)
+	case p.mode == partShared:
+		var err error
+		if a.s.value, err = p.dict.Value(a.s.value[:0], uint32(c)); err != nil && a.err == nil {
+			a.err = err
+		}
+
+		return appendKeyBytes(key, bytesTag(p.kind), a.s.value, last)
+	}
+
+	return appendKeyInt(key, p.lo+int64(c)*p.step)
 }
 
 // histogram counts the selected rows per combined code and adds the counts
@@ -1051,6 +1177,13 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 		a.pick(arg, t, gid, rows, count)
 
 		return nil
+	}
+	if kind == vec.KindString && a.coded.args[i] {
+		if d, ref := w.dictionary(arg.expr.path); d != nil {
+			if done, err := a.codedValues(i, ref, d, t, n, idx); done || err != nil {
+				return err
+			}
+		}
 	}
 	c, err := w.column(arg.expr.path, kind)
 	if err != nil {

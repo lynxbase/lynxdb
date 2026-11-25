@@ -49,6 +49,10 @@ type Stats struct {
 	// BlocksMatched and RowsMatched count what passed the filter.
 	BlocksMatched int64
 	RowsMatched   int64
+	// AggregatedByCode counts the blocks whose rows were grouped, or whose
+	// distinct values were counted, by the codes of a part dictionary
+	// without their strings.
+	AggregatedByCode int64
 	// HeldBytes is the memory the query held at its end: arenas, logs and
 	// reusable buffers.
 	HeldBytes int64

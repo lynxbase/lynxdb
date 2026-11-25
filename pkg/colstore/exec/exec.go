@@ -31,6 +31,14 @@ type sharedGroups struct {
 	mu    sync.Mutex
 	arena *mem.Arena
 	table *vec.ByteTable
+	// full is set once the table numbers as many keys as its users take.
+	full atomic.Bool
+}
+
+func newSharedGroups() *sharedGroups {
+	a := mem.NewArena()
+
+	return &sharedGroups{arena: a, table: vec.NewByteTable(a)}
 }
 
 func (s *sharedGroups) id(key []byte, h uint64) uint32 {
@@ -38,6 +46,19 @@ func (s *sharedGroups) id(key []byte, h uint64) uint32 {
 	defer s.mu.Unlock()
 
 	return uint32(s.table.IDHashed(key, h))
+}
+
+// key appends the key with the given id to dst.
+func (s *sharedGroups) key(dst []byte, id uint32) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append(dst, s.table.Key(int(id))...)
+}
+
+func (s *sharedGroups) release() {
+	s.table.Release()
+	s.arena.Free()
 }
 
 // execution is one run of a query.
@@ -59,6 +80,19 @@ type execution struct {
 	// counted in while workers scan, 1<<partitionBits for each count.
 	dparts     []distinctPartition
 	dpartsOnce sync.Once
+	// coded holds what the workers share of the parts whose rows they
+	// aggregate by the codes of a part dictionary; queue holds what the
+	// parts that the scan has left held, until it is turned into strings,
+	// queued counts it and waiting is its bytes.
+	codedMu sync.Mutex
+	coded   map[*part.Part]*codedPart
+	queueMu sync.Mutex
+	queue   []handover
+	queued  atomic.Int32
+	waiting atomic.Int64
+	// others numbers, for the groups of a key of codes, what the other
+	// keys of the plan hold.
+	others *sharedGroups
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
 	// rows is the number of rows the workers aggregated.
@@ -201,8 +235,10 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	}
 	x := &execution{q: q, workers: make([]*worker, n), ords: ords, partBits: partitionBitsFor(n)}
 	if q.agg != nil && q.agg.group >= 0 {
-		a := mem.NewArena()
-		x.shared = &sharedGroups{arena: a, table: vec.NewByteTable(a)}
+		x.shared = newSharedGroups()
+	}
+	if q.agg != nil && len(q.agg.keys) > 1 {
+		x.others = newSharedGroups()
 	}
 	defer x.release()
 	scan := q.opts
@@ -267,6 +303,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		res.Stats.ColumnsSkippedByToken += w.unsearched
 		res.Stats.BlocksMatched += w.blocks
 		res.Stats.RowsMatched += w.matched
+		res.Stats.AggregatedByCode += w.agg.coded.blocks
 		res.Stats.CountedByTime += w.byTime
 		res.Stats.TimeMissedFilter += w.timeMissed[missFilter]
 		res.Stats.TimeMissedRecord += w.timeMissed[missRecord]
@@ -280,8 +317,10 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 // held returns the bytes the execution holds in arenas and buffers.
 func (x *execution) held() int64 {
 	n := 0
-	if x.shared != nil {
-		n += x.shared.arena.Size() + x.shared.table.Retained()
+	for _, s := range []*sharedGroups{x.shared, x.others} {
+		if s != nil {
+			n += s.arena.Size() + s.table.Retained()
+		}
 	}
 	for _, w := range x.workers {
 		if w != nil {
@@ -310,9 +349,11 @@ func (x *execution) held() int64 {
 }
 
 func (x *execution) release() {
-	if x.shared != nil {
-		x.shared.table.Release()
-		x.shared.arena.Free()
+	x.releaseCoded()
+	for _, s := range []*sharedGroups{x.shared, x.others} {
+		if s != nil {
+			s.release()
+		}
 	}
 	for _, w := range x.workers {
 		if w != nil {

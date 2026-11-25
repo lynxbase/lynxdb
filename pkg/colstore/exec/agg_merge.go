@@ -83,6 +83,9 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 	slots := len(x.workers)
 	x.mergers = make([]merger, slots)
 	floats := make([]bool, len(plan.args))
+	if err := x.finishCoded(ws); err != nil {
+		return nil, err
+	}
 	staged, total := false, 0
 	for _, w := range ws {
 		x.rows += w.matched
