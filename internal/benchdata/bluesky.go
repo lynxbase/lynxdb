@@ -51,6 +51,9 @@ type Generator struct {
 	favour int
 	// batch is the commit of several records whose events come next.
 	batch batch
+	// rare is a word that one post in rareIn ends with, when rareIn is set.
+	rare   string
+	rareIn uint64
 }
 
 // batch is a commit of several records of one account, collection and
@@ -85,6 +88,15 @@ func (g *Generator) Favour(power int) *Generator {
 // unless set, so that a few million of them can cover several days.
 func (g *Generator) Spread(step int64) *Generator {
 	g.step = uint64(max(step, 1))
+
+	return g
+}
+
+// Rare makes one in oneIn of the posts that follow end with word, which the
+// other texts do not hold, so that a search for it keeps a few rows of a
+// block.
+func (g *Generator) Rare(word string, oneIn int) *Generator {
+	g.rare, g.rareIn = word, uint64(max(oneIn, 1))
 
 	return g
 }
@@ -231,6 +243,9 @@ func (g *Generator) text(dst []byte) []byte {
 			dst = append(dst, ' ')
 		}
 		dst = append(dst, words[g.next()%uint64(len(words))]...)
+	}
+	if g.rareIn > 0 && g.next()%g.rareIn == 0 {
+		dst = append(append(dst, ' '), g.rare...)
 	}
 
 	return dst
