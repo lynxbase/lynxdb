@@ -24,6 +24,9 @@ type codedPart struct {
 	// first is the number of rows of a first block too small for the writer
 	// to store them as codes, so that the part holds blocks of both forms.
 	first int
+	// unfiltered leaves the part without token filters, so that nothing
+	// but its rows and its dictionaries tells what a search finds.
+	unfiltered bool
 }
 
 // codedDocs returns n events of accounts drawn from so many: acct is in
@@ -55,7 +58,7 @@ func codedTable(t testing.TB, docs [][]byte, blockRows int, parts []codedPart) *
 	per := (len(docs) + len(parts) - 1) / len(parts)
 	for i, cp := range parts {
 		var buf bytes.Buffer
-		w := part.NewWriter(&buf, part.Options{})
+		w := part.NewWriter(&buf, part.Options{NoTokenFilter: cp.unfiltered})
 		all := shred.NewBatch(shred.Options{TimeField: "ts"})
 		for _, doc := range docs[min(i*per, len(docs)):min((i+1)*per, len(docs))] {
 			if err := all.AddJSON(doc, 0); err != nil {

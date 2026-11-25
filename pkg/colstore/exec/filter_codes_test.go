@@ -64,10 +64,14 @@ func TestCodesFilterAsStringsDo(t *testing.T) {
 		{name: "another column's words by account", plan: &exec.Aggregate{Input: &exec.Scan{Filter: exec.MatchAny(tokenfilter.Word("rare morning"))},
 			Keys: keys("acct"), Aggs: count}, ruledOut: true},
 	}
+	// The token filter of a column spares a search the strings that lack
+	// its words; without the filters, the layout of the dictionary does.
 	for _, parts := range [][]codedPart{
 		{{shared: true}, {shared: true}},
 		{{shared: true, first: 900}, {}, {shared: true}},
+		{{shared: true, unfiltered: true}, {shared: true, first: 900, unfiltered: true}},
 	} {
+		unfiltered := parts[0].unfiltered
 		plain := codedTable(t, docs, 4096, make([]codedPart, len(parts)))
 		coded := codedTable(t, docs, 4096, parts)
 		was, is := plain.Snapshot(), coded.Snapshot()
@@ -96,7 +100,11 @@ func TestCodesFilterAsStringsDo(t *testing.T) {
 				if !slices.Equal(got, want) {
 					t.Fatalf("%s with %d workers and %d parts: %d rows, want %d; first %v, want %v", c.name, workers, len(parts), len(got), len(want), first(got), first(want))
 				}
-				if s := res.Stats; c.byCode != (s.ColumnsFilteredByCode > 0) || c.ruledOut != (s.ColumnsRuledOutByDictionary > 0) {
+				// Where a block is too short for a column to have a filter
+				// of its own, the dictionary rules the pattern out there too.
+				s := res.Stats
+				ruledOut := s.ColumnsRuledOutByDictionary > 0
+				if c.byCode != (s.ColumnsFilteredByCode > 0) || (ruledOut && !c.ruledOut) || (unfiltered && c.ruledOut && !ruledOut) {
 					t.Fatalf("%s with %d workers and %d parts: %d columns filtered by code and %d ruled out by their dictionary",
 						c.name, workers, len(parts), s.ColumnsFilteredByCode, s.ColumnsRuledOutByDictionary)
 				}
