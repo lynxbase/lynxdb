@@ -93,26 +93,29 @@ func (m metaFields) empty() bool {
 
 // queryStats is exec.Stats as a reply shows it.
 type queryStats struct {
-	Blocks                int64  `json:"blocks"`
-	SkippedByKey          int64  `json:"skipped_by_key"`
-	SkippedByToken        int64  `json:"skipped_by_token"`
-	SkippedByTime         int64  `json:"skipped_by_time"`
-	SkippedAsEmpty        int64  `json:"skipped_as_empty"`
-	SkippedByStats        int64  `json:"skipped_by_stats"`
-	CountedByIndex        int64  `json:"counted_by_index"`
-	CountedByEntries      int64  `json:"counted_by_entries"`
-	CountedByTime         int64  `json:"counted_by_time"`
-	TimeMissedFilter      int64  `json:"time_missed_filter"`
-	TimeMissedRecord      int64  `json:"time_missed_record"`
-	TimeMissedKeys        int64  `json:"time_missed_keys"`
-	TimeMissedNulls       int64  `json:"time_missed_nulls"`
-	ColumnsSearched       int64  `json:"columns_searched"`
-	ColumnsSkippedByToken int64  `json:"columns_skipped_by_token"`
-	BlocksMatched         int64  `json:"blocks_matched"`
-	RowsMatched           int64  `json:"rows_matched"`
-	HeldBytes             int64  `json:"held_bytes"`
-	Ordered               bool   `json:"ordered"`
-	HashedFor             string `json:"hashed_for,omitempty"`
+	Blocks                      int64  `json:"blocks"`
+	SkippedByKey                int64  `json:"skipped_by_key"`
+	SkippedByToken              int64  `json:"skipped_by_token"`
+	SkippedByTime               int64  `json:"skipped_by_time"`
+	SkippedAsEmpty              int64  `json:"skipped_as_empty"`
+	SkippedByStats              int64  `json:"skipped_by_stats"`
+	CountedByIndex              int64  `json:"counted_by_index"`
+	CountedByEntries            int64  `json:"counted_by_entries"`
+	CountedByTime               int64  `json:"counted_by_time"`
+	TimeMissedFilter            int64  `json:"time_missed_filter"`
+	TimeMissedRecord            int64  `json:"time_missed_record"`
+	TimeMissedKeys              int64  `json:"time_missed_keys"`
+	TimeMissedNulls             int64  `json:"time_missed_nulls"`
+	ColumnsSearched             int64  `json:"columns_searched"`
+	ColumnsSkippedByToken       int64  `json:"columns_skipped_by_token"`
+	ColumnsFilteredByCode       int64  `json:"columns_filtered_by_code"`
+	ColumnsRuledOutByDictionary int64  `json:"columns_ruled_out_by_dictionary"`
+	AggregatedByCode            int64  `json:"aggregated_by_code"`
+	BlocksMatched               int64  `json:"blocks_matched"`
+	RowsMatched                 int64  `json:"rows_matched"`
+	HeldBytes                   int64  `json:"held_bytes"`
+	Ordered                     bool   `json:"ordered"`
+	HashedFor                   string `json:"hashed_for,omitempty"`
 }
 
 // MetaOpt configures optional metadata fields.
@@ -157,7 +160,9 @@ func WithStats(st exec.Stats) MetaOpt {
 			TimeMissedFilter: st.TimeMissedFilter, TimeMissedRecord: st.TimeMissedRecord,
 			TimeMissedKeys: st.TimeMissedKeys, TimeMissedNulls: st.TimeMissedNulls,
 			ColumnsSearched: st.ColumnsSearched, ColumnsSkippedByToken: st.ColumnsSkippedByToken,
-			BlocksMatched: st.BlocksMatched, RowsMatched: st.RowsMatched, HeldBytes: st.HeldBytes,
+			ColumnsFilteredByCode: st.ColumnsFilteredByCode, ColumnsRuledOutByDictionary: st.ColumnsRuledOutByDictionary,
+			AggregatedByCode: st.AggregatedByCode,
+			BlocksMatched:    st.BlocksMatched, RowsMatched: st.RowsMatched, HeldBytes: st.HeldBytes,
 			Ordered: st.Ordered, HashedFor: st.HashedFor,
 		}
 	}

@@ -1782,6 +1782,12 @@ components:
             rows (`time_missed_filter`), they kept no rows by time in buckets that divide those of
             the query (`time_missed_record`), a column key held several values in the block
             (`time_missed_keys`), or a value in some of its rows only (`time_missed_nulls`).
+            Where blocks store a column as codes of the dictionary of their part, a filter on its
+            strings tests each string once for the part (`columns_filtered_by_code` counts the
+            columns of blocks filtered so) and leaves the column unread when the layout of the
+            dictionary tells that no string of it holds the pattern
+            (`columns_ruled_out_by_dictionary`); `aggregated_by_code` counts the blocks whose rows
+            were grouped, or whose distinct values were counted, by the codes.
           properties:
             blocks: {type: integer}
             skipped_by_key: {type: integer}
@@ -1798,6 +1804,9 @@ components:
             time_missed_nulls: {type: integer}
             columns_searched: {type: integer}
             columns_skipped_by_token: {type: integer}
+            columns_filtered_by_code: {type: integer}
+            columns_ruled_out_by_dictionary: {type: integer}
+            aggregated_by_code: {type: integer}
             blocks_matched: {type: integer}
             rows_matched: {type: integer}
             held_bytes: {type: integer}
