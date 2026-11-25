@@ -149,7 +149,9 @@ func newWorker(x *execution) *worker {
 		s.anyString = func(v []byte) { s.anyHit = s.anyHit || s.anyPat.Match(v) }
 	}
 	w.sink.init(q)
-	w.sink.bound = x.bound
+	if x.first != nil {
+		w.sink.first, w.sink.top.bound = x.first, &x.first.bound
+	}
 	if q.agg != nil {
 		w.agg.init(w)
 	}

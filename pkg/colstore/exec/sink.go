@@ -2,7 +2,9 @@ package exec
 
 import (
 	"bytes"
+	"math"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -14,9 +16,9 @@ type sink struct {
 	q    *query
 	cols []colVec
 	top  topK
-	// bound is where the sink of a plan that keeps the first rows by time
+	// first is where the sink of a plan that keeps the first rows by time
 	// tells the scan how far those reach.
-	bound *atomic.Int64
+	first *firstTimes
 	// raw is set when the sink takes every group as the aggregate leaves
 	// it, for what the plan does above the aggregate to run afterwards.
 	raw bool
@@ -64,8 +66,10 @@ func (s *sink) add(batch []colVec) {
 			s.cols[c].appendAll(&batch[c])
 		}
 	case s.top.k > 0:
+		if s.first != nil {
+			s.first.offer(&batch[s.q.timeCol], n)
+		}
 		s.top.offer(batch, n)
-		s.tighten()
 	case s.q.limit > 0 && s.cols[0].len()+n > s.q.limit:
 		take := s.q.limit - s.cols[0].len()
 		for c := range batch {
@@ -80,20 +84,86 @@ func (s *sink) add(batch []colVec) {
 	}
 }
 
-// tighten tells the scan the time that a row must reach to be kept, once
-// the sink holds as many rows as the plan keeps: the time of the last of
-// them, which rows of other goroutines can only move further.
-func (s *sink) tighten() {
-	if s.bound == nil || len(s.top.rows) < s.top.k {
+// firstTimes holds the times of the first rows by time that the goroutines
+// of a plan have found together, as many as the plan keeps, and the bound
+// that the last of them gives the scan: a row beyond it is not among the
+// first, whichever goroutine finds it.
+type firstTimes struct {
+	// bound is the time of the last row kept once limit rows are, and
+	// before that the time that no row lies beyond.
+	bound atomic.Int64
+	mu    sync.Mutex
+	// heap holds the times xored with flip, which orders the first of them
+	// least, as a heap whose root is the greatest.
+	heap  []int64
+	limit int
+	flip  int64
+}
+
+// newFirstTimes returns the times of the limit latest rows, or of the
+// earliest when latest is unset.
+func newFirstTimes(limit int, latest bool) *firstTimes {
+	f := &firstTimes{limit: limit, heap: make([]int64, 0, limit)}
+	if latest {
+		f.flip = -1
+	}
+	f.bound.Store(math.MaxInt64 ^ f.flip)
+
+	return f
+}
+
+// offer takes the times of the n rows of c.
+func (f *firstTimes) offer(c *colVec, n int) {
+	if c.kind != vec.KindInt {
 		return
 	}
-	at := s.top.rows[0][s.q.timeCol].Int
-	for {
-		bound := s.bound.Load()
-		if (s.q.byTime < 0 && at <= bound) || (s.q.byTime > 0 && at >= bound) || s.bound.CompareAndSwap(bound, at) {
-			return
+	flip, times := f.flip, c.ints[:n]
+	worst := f.bound.Load() ^ flip
+	i := 0
+	for i < n && times[i]^flip >= worst {
+		i++
+	}
+	if i == n {
+		return
+	}
+	f.mu.Lock()
+	h := f.heap
+	for ; i < n; i++ {
+		at := times[i] ^ flip
+		switch {
+		case len(h) < f.limit:
+			h = append(h, at)
+			for j := len(h) - 1; j > 0; {
+				parent := (j - 1) / 2
+				if h[j] <= h[parent] {
+					break
+				}
+				h[j], h[parent] = h[parent], h[j]
+				j = parent
+			}
+		case at < h[0]:
+			h[0] = at
+			for j := 0; ; {
+				child := 2*j + 1
+				if child >= len(h) {
+					break
+				}
+				if r := child + 1; r < len(h) && h[r] > h[child] {
+					child = r
+				}
+				if h[child] <= h[j] {
+					break
+				}
+				h[j], h[child] = h[child], h[j]
+				j = child
+			}
 		}
 	}
+	f.heap = h
+	if len(h) == f.limit {
+		f.bound.Store(h[0] ^ flip)
+	}
+	f.mu.Unlock()
 }
 
 // kindRank orders values of different kinds: booleans, numbers, strings,
@@ -226,6 +296,9 @@ type topK struct {
 	k     int
 	order []orderSpec
 	rows  [][]Value
+	// bound, when set, is the value of the first sort column that no row
+	// kept lies beyond, which the rows of other goroutines give as well.
+	bound *atomic.Int64
 }
 
 func (t *topK) compare(a, b []Value) int {
@@ -252,7 +325,16 @@ func (t *topK) before(batch []colVec, i int, row []Value) bool {
 func (t *topK) offer(batch []colVec, n int) {
 	first := t.order[0]
 	lead := &batch[first.col]
+	bounded, worst := t.bound != nil && lead.kind == vec.KindInt, int64(0)
+	if bounded {
+		worst = t.bound.Load()
+	}
 	for i := 0; i < n; i++ {
+		if bounded {
+			if v := lead.ints[i]; v != worst && (v > worst) != first.desc {
+				continue
+			}
+		}
 		if len(t.rows) < t.k {
 			row := make([]Value, len(batch))
 			for c := range batch {
