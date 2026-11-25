@@ -6,6 +6,44 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 )
 
+// mayHold reports whether a string of d may hold the pattern, as a search
+// learns it: from the layout of the packed strings, and from each of the
+// strings kept as they are, which it tells from the others by their codes.
+func mayHold(t *testing.T, d *Dictionary, pat *tokenfilter.Pattern) bool {
+	t.Helper()
+	if d.PackedMayHold(pat) {
+		return true
+	}
+	if !d.Odd() {
+		return false
+	}
+	codes := make([]uint32, d.Len())
+	for i := range codes {
+		codes[i] = uint32(i)
+	}
+	odd, err := d.AppendOdd(nil, codes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(odd) != d.exceptions {
+		t.Fatalf("%d codes have a string kept as it is, the dictionary keeps %d", len(odd), d.exceptions)
+	}
+	var val []byte
+	for _, code := range odd {
+		if val, err = d.Value(val[:0], code); err != nil {
+			t.Fatal(err)
+		}
+		if len(val) == d.reader.stride {
+			t.Fatalf("code %d is told to be kept as it is and has the length of the packed strings", code)
+		}
+		if pat.Match(val) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // TestLayoutOfADictionaryRulesPatternsOut asks dictionaries of identifiers,
 // with and without strings of other lengths, whether a string of theirs may
 // hold a pattern: never no for a pattern that one holds, and no for the
@@ -59,10 +97,7 @@ func TestLayoutOfADictionaryRulesPatternsOut(t *testing.T) {
 			for _, v := range values {
 				held = held || pat.Match(v)
 			}
-			may, err := d.MayHold(&pat)
-			if err != nil {
-				t.Fatal(err)
-			}
+			may := mayHold(t, d, &pat)
 			if held && !may {
 				t.Fatalf("one in %d odd, %s: a string holds the pattern that the dictionary rules out", odd, name)
 			}
@@ -72,13 +107,13 @@ func TestLayoutOfADictionaryRulesPatternsOut(t *testing.T) {
 		}
 		for _, name := range []string{"a word no identifier spells", "a word with a byte none has", "capitals", "a word of no odd string", "an expression none matches"} {
 			pat := patterns[name]
-			if may, _ := d.MayHold(&pat); may {
+			if mayHold(t, d, &pat) {
 				t.Fatalf("one in %d odd, %s: the dictionary does not rule the pattern out", odd, name)
 			}
 		}
 		if odd == 0 {
 			pat := patterns["a word of the odd strings"]
-			if may, _ := d.MayHold(&pat); may {
+			if mayHold(t, d, &pat) {
 				t.Fatal("a dictionary of identifiers alone does not rule out the word of other strings")
 			}
 		}

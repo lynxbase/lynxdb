@@ -257,65 +257,75 @@ func (d *Dictionary) aheadOf(codes []uint32, spans [][2]uint32) [][2]uint32 {
 	return spans
 }
 
-// MayHold reports whether a string of the dictionary may hold the pattern.
-// False tells that none does, which it learns without reading them: from
-// the layout of the strings of the one length, the bytes that each of
-// their positions takes, and from the few strings kept as they are. True
-// tells nothing.
-func (d *Dictionary) MayHold(p *tokenfilter.Pattern) (bool, error) {
+// PackedMayHold reports whether one of the strings that the dictionary
+// packs, those of the one length, may hold the pattern. False tells that
+// none does, which it learns from their layout, the bytes that each of
+// their positions takes, without reading one; true tells nothing. The
+// strings of other lengths, which Odd tells apart, are not looked at.
+func (d *Dictionary) PackedMayHold(p *tokenfilter.Pattern) bool {
 	r := &d.reader
-	if d.stored > d.exceptions {
-		var sets [maxDictStride]tokenfilter.ByteSet
-		for i, c := range r.template {
-			sets[i].Add(c)
-		}
-		for _, step := range r.schedule {
-			for j := 0; j < step.count; j++ {
-				set := &sets[step.at+j]
-				*set = tokenfilter.ByteSet{}
-				for _, c := range r.table[(step.first+j)<<maxPackedBits:][:1<<step.width] {
-					set.Add(c)
-				}
+	if d.stored == d.exceptions {
+		return false
+	}
+	var sets [maxDictStride]tokenfilter.ByteSet
+	for i, c := range r.template {
+		sets[i].Add(c)
+	}
+	for _, step := range r.schedule {
+		for j := 0; j < step.count; j++ {
+			set := &sets[step.at+j]
+			*set = tokenfilter.ByteSet{}
+			for _, c := range r.table[(step.first+j)<<maxPackedBits:][:1<<step.width] {
+				set.Add(c)
 			}
 		}
-		if p.Within(sets[:r.stride]) {
-			return true, nil
-		}
 	}
-	held := false
-	err := d.others(func(value []byte) bool {
-		held = p.Match(value)
 
-		return !held
-	})
-
-	return held, err
+	return p.Within(sets[:r.stride])
 }
 
-// others calls fn with every string that the dictionary keeps as it is,
-// until fn returns false.
-func (d *Dictionary) others(fn func(value []byte) bool) error {
+// Odd reports whether the dictionary keeps strings as they are, of other
+// lengths than the one it packs.
+func (d *Dictionary) Odd() bool { return d.exceptions != 0 }
+
+// AppendOdd appends to dst those of codes, which ascend, whose strings the
+// dictionary keeps as they are. It reads the numbers of those strings, a
+// few bytes for each that the dictionary keeps so, and for a dictionary
+// some of whose codes lack a string the bits that tell which, not a string.
+func (d *Dictionary) AppendOdd(dst, codes []uint32) ([]uint32, error) {
 	count := uint64(d.exceptions)
 	if count == 0 {
-		return nil
+		return dst, nil
 	}
 	base := d.slotsLen
-	ends := base + 4*count
-	text := ends + 4*(count+1)
-	if text > base+d.exceptLen || !d.checked(base, d.exceptLen) {
-		return ErrCorrupt
+	if !d.checked(base, 4*count) {
+		return dst, ErrCorrupt
 	}
-	for k := uint64(0); k < count; k++ {
-		from, to := uint64(binary.LittleEndian.Uint32(d.data[ends+4*k:])), uint64(binary.LittleEndian.Uint32(d.data[ends+4*k+4:]))
-		if from > to || to > base+d.exceptLen-text {
-			return ErrCorrupt
+	numbers := d.data[base : base+4*count]
+	at := uint64(0)
+	for _, code := range codes {
+		i, err := d.index(code)
+		if err != nil {
+			return dst, err
 		}
-		if !fn(d.data[text+from : text+to]) {
-			return nil
+		// The numbers ascend as the codes do: the next is looked for from
+		// where the last was, in steps that double.
+		step := uint64(1)
+		for at+step <= count && binary.LittleEndian.Uint32(numbers[4*(at+step-1):]) < uint32(i) {
+			at += step
+			step *= 2
+		}
+		for step /= 2; step > 0; step /= 2 {
+			if at+step <= count && binary.LittleEndian.Uint32(numbers[4*(at+step-1):]) < uint32(i) {
+				at += step
+			}
+		}
+		if at < count && binary.LittleEndian.Uint32(numbers[4*at:]) == uint32(i) {
+			dst = append(dst, code)
 		}
 	}
 
-	return nil
+	return dst, nil
 }
 
 // checked reports whether the n bytes at off of the sections match the

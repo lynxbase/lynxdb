@@ -15,9 +15,10 @@ import (
 // and by no other row of the part.
 type verdicts struct {
 	bits []uint64
-	// none is set when the layout of the dictionary tells that none of
-	// its strings passes.
-	none bool
+	// packed is set when the layout of the strings that the dictionary
+	// packs tells that none of them passes, and none when it keeps no
+	// others, so that none of its strings does.
+	packed, none bool
 }
 
 // verdictKey names the predicate and the dictionary of a verdicts.
@@ -43,11 +44,8 @@ func (w *worker) verdictsOf(p *pred, d *part.Dictionary) (*verdicts, error) {
 	if v == nil {
 		v = &verdicts{}
 		if p.patterned() {
-			may, err := d.MayHold(&p.pat)
-			if err != nil {
-				return nil, err
-			}
-			v.none = !may
+			v.packed = !d.PackedMayHold(&p.pat)
+			v.none = v.packed && !d.Odd()
 		}
 		if !v.none {
 			// The code that follows the last stands for no string, which
@@ -90,6 +88,26 @@ func (w *worker) judge(p *pred, d *part.Dictionary, v *verdicts, codes []uint32)
 	}
 	slices.Sort(fresh)
 	fresh = slices.Compact(fresh)
+	if v.packed {
+		// The strings kept as they are, which their codes tell from the
+		// others, are the ones that may pass.
+		odd, err := d.AppendOdd(w.odd[:0], fresh)
+		if w.odd = odd; err != nil {
+			return err
+		}
+		next := 0
+		for _, code := range fresh {
+			if next < len(odd) && odd[next] == code {
+				next++
+
+				continue
+			}
+			atomic.OrUint64(&v.bits[code>>5], 1<<(2*(code&31)))
+		}
+		if fresh = odd; len(fresh) == 0 {
+			return nil
+		}
+	}
 	d.Ahead(len(fresh))
 	c := &w.spelled
 	c.Offsets, c.Data = c.Offsets[:0], c.Data[:0]

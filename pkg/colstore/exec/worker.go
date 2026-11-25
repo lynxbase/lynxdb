@@ -51,8 +51,10 @@ type scratch struct {
 	codesOK []bool
 	packed  []uint32
 	// fresh holds the codes of a block whose strings a predicate has not
-	// tested yet, and spelled those strings.
+	// tested yet, odd those of them that their dictionary keeps as they
+	// are, and spelled the strings that it tests.
 	fresh   []uint32
+	odd     []uint32
 	spelled vec.Column
 	// views show the rows of a window of a shared block, a view per column
 	// slot that viewed marks as set for the open window.
@@ -253,7 +255,7 @@ func (w *worker) held() int {
 	for i := range w.codes {
 		n += 4 * used(w.codes[i])
 	}
-	n += 4*used(w.packed) + 4*cap(w.fresh) + w.spelled.Retained()
+	n += 4*used(w.packed) + 4*cap(w.fresh) + 4*cap(w.odd) + w.spelled.Retained()
 	for i := range w.outs {
 		n += w.outs[i].held()
 	}
