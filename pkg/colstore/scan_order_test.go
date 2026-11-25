@@ -2,6 +2,7 @@ package colstore
 
 import (
 	"cmp"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -84,14 +85,7 @@ func BenchmarkUnitQueue(b *testing.B) {
 		units []scanUnit
 	}{{"by time", timed}, {"by key", keyed}} {
 		for _, take := range []int{64, 2048, len(layout.units)} {
-			name := layout.name + "/all"
-			if take < len(layout.units) {
-				name = layout.name + "/first " + string(rune('0'+take/1000)) + "k"
-				if take < 1000 {
-					name = layout.name + "/first few"
-				}
-			}
-			b.Run(name, func(b *testing.B) {
+			b.Run(fmt.Sprintf("%s/first %d of %d", layout.name, take, len(layout.units)), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					q.reset(layout.units, true)
 					for given := 0; given < take; given += 64 {
