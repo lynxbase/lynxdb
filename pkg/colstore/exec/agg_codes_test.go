@@ -60,7 +60,7 @@ func codedTable(t testing.TB, docs [][]byte, blockRows int, parts []codedPart) *
 	per := (len(docs) + len(parts) - 1) / len(parts)
 	for i, cp := range parts {
 		var buf bytes.Buffer
-		w := part.NewWriter(&buf, part.Options{NoTokenFilter: cp.unfiltered})
+		w := part.NewWriter(&buf, part.Options{NoTokenFilter: cp.unfiltered, Dictionary: cp.shared})
 		all := shred.NewBatch(shred.Options{TimeField: "ts"})
 		for _, doc := range docs[min(i*per, len(docs)):min((i+1)*per, len(docs))] {
 			if err := all.AddJSON(doc, 0); err != nil {

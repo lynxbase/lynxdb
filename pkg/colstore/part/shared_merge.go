@@ -56,8 +56,10 @@ func (m *merger) share(c *mergeCursor, id uint32) *pathShare {
 // values repeat enough across the blocks of the range for the dictionary and
 // the codes to take one part in sharedGain less than its chunks do; one
 // that every part shares stays shared for as long as that takes no more.
+// A writer whose options leave Dictionary unset shares none, and the merge
+// does not look at the blocks for it.
 func (m *merger) planShared() error {
-	if !m.w.packs(vec.KindString) {
+	if !m.w.opts.Dictionary || !m.w.packs(vec.KindString) {
 		return nil
 	}
 	m.shares = m.shares[:0]

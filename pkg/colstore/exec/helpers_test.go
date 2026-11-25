@@ -27,8 +27,9 @@ type layout struct {
 	parts     int
 	// sortKey, when set, orders each part by these paths.
 	sortKey []string
-	// shared tells the writer of every row of a part before its blocks,
-	// so that it gives the part dictionaries where they pay.
+	// shared lets the writer give a part dictionaries and tells it of
+	// every row of the part before its blocks, so that it does where they
+	// pay.
 	shared bool
 }
 
@@ -44,7 +45,7 @@ func buildTable(t testing.TB, docs [][]byte, timeField string, l layout) *colsto
 	var handles []*colstore.Handle
 	per := (len(docs) + l.parts - 1) / max(l.parts, 1)
 	for from := 0; from < len(docs); from += per {
-		opts := part.Options{}
+		opts := part.Options{Dictionary: l.shared}
 		if l.sortKey != nil {
 			opts.Ordered, opts.SortKey = true, l.sortKey
 		}

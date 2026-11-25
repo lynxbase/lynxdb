@@ -146,7 +146,7 @@ func checkDictionary(t *testing.T, p *Part, path string) *Dictionary {
 }
 
 func TestMergeMergesTheDictionariesOfItsParts(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	var srcs []*Part
 	var docs [][]string
 	for i := range 4 {
@@ -177,7 +177,7 @@ func TestMergeMergesTheDictionariesOfItsParts(t *testing.T) {
 }
 
 func TestMergeSharesAColumnThatItsPartsDoNot(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	var srcs []*Part
 	var docs [][]string
 	for i := range 6 {
@@ -202,7 +202,7 @@ func TestMergeSharesAColumnThatItsPartsDoNot(t *testing.T) {
 }
 
 func TestMergeOfPartsWithAndWithoutADictionary(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	a, b := keyedDocs(1, 12000, 400, 1200), keyedDocs(2, 12000, 400, 1200)
 	// A part of few rows has no dictionary, and one written without Share
 	// has none either.
@@ -220,7 +220,7 @@ func TestMergeOfPartsWithAndWithoutADictionary(t *testing.T) {
 }
 
 func TestRangeMergesLeaveCodesWithoutAString(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	var srcs []*Part
 	var docs [][]string
 	for i := range 3 {
@@ -253,7 +253,7 @@ func TestRangeMergesLeaveCodesWithoutAString(t *testing.T) {
 }
 
 func TestMergeCopiesBlocksOfSharedColumns(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	// Parts whose keys follow one another: their blocks are copied. A
 	// block is not when the merge shares a column that the block does not,
 	// so the second account, which a part holds too seldom to share it, is
@@ -295,7 +295,7 @@ func TestMergeCopiesBlocksOfSharedColumns(t *testing.T) {
 }
 
 func TestMergeIntoAWriterThatDoesNotPack(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	a, b := keyedDocs(1, 12000, 400, 1200), keyedDocs(2, 12000, 400, 1200)
 	srcs := []*Part{plannedPart(t, a, 2048, opts), plannedPart(t, b, 2048, opts)}
 	plain := opts
@@ -307,8 +307,40 @@ func TestMergeIntoAWriterThatDoesNotPack(t *testing.T) {
 	}
 }
 
+func TestMergeIntoAWriterWithoutDictionary(t *testing.T) {
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
+	plain := opts
+	plain.Dictionary = false
+	// Parts with dictionaries, and parts without one of rows whose accounts
+	// repeat enough for a merge to share them.
+	for name, write := range map[string]func(docs []string) *Part{
+		"parts with dictionaries": func(docs []string) *Part { return plannedPart(t, docs, 2048, opts) },
+		"parts without":           func(docs []string) *Part { return batchPart(t, docs, 2048, plain, true) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var srcs []*Part
+			var docs [][]string
+			for i := range 4 {
+				d := keyedDocs(int64(i+1), 12000, 400, 1200)
+				docs = append(docs, d)
+				srcs = append(srcs, write(d))
+			}
+			merged := mergeKeyRange(t, srcs, plain, 4096, nil, nil)
+			holdRows(t, []*Part{merged}, docs...)
+			if merged.Shares() {
+				t.Fatal("a writer whose options ask for no dictionary merged one")
+			}
+			for _, path := range []string{"did", "other"} {
+				if shared, _ := sharedBlocks(t, merged, path); shared != 0 {
+					t.Fatalf("%d blocks of the merged part store %s as codes", shared, path)
+				}
+			}
+		})
+	}
+}
+
 func TestPlanOutlivesItsMerge(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	var srcs, others []*Part
 	for i := range 3 {
 		srcs = append(srcs, plannedPart(t, keyedDocs(int64(i+1), 12000, 400, 1200), 2048, opts))
@@ -343,7 +375,7 @@ func TestPlanOutlivesItsMerge(t *testing.T) {
 }
 
 func TestCopiedBlocksTakeCodesForTheStringsTheyStored(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	// Parts whose keys follow one another, each with too few second
 	// accounts to share them, and with a column of one value a block.
 	var srcs []*Part
@@ -400,7 +432,7 @@ func TestCopiedBlocksTakeCodesForTheStringsTheyStored(t *testing.T) {
 }
 
 func TestMergeLeavesAColumnAloneThatWasNotWorthSharing(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	// A tenth of the accounts repeat: more than the merge takes for none,
 	// and fewer than a dictionary needs to pay.
 	docs := func(seed int64) []string {

@@ -36,9 +36,9 @@ func sharedColumns(t *testing.T, s *Store) map[string]int {
 
 // TestStoreKeepsItsRowsWithPartDictionaries loads events whose accounts and
 // posts repeat, in runs that merges of two tiers and a compaction rewrite,
-// into a store that gives its parts dictionaries and into one that does
-// not: both hold the same rows after every step, and the first stores the
-// columns that repeat as codes.
+// into a store whose options give its parts dictionaries and into one
+// whose options do not: both hold the same rows after every step, the
+// first stores the columns that repeat as codes and the second none.
 func TestStoreKeepsItsRowsWithPartDictionaries(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -49,9 +49,9 @@ func TestStoreKeepsItsRowsWithPartDictionaries(t *testing.T) {
 		{"keyed", []string{"kind", "commit.operation", "commit.collection", "did"}, []string{"commit.record.subject", "commit.record.subject.cid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := StoreOptions{SortKey: tc.key, TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, MergeFanIn: 3, FlushInterval: -1}
-			plain := opts
-			plain.Part.NoPacking = true
+			plain := StoreOptions{SortKey: tc.key, TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, MergeFanIn: 3, FlushInterval: -1}
+			opts := plain
+			opts.Part.Dictionary = true
 			both := []StoreOptions{opts, plain}
 			dirs := []string{t.TempDir(), t.TempDir()}
 			stores := make([]*Store, len(both))
@@ -133,7 +133,7 @@ func TestStoreKeepsItsRowsWithPartDictionaries(t *testing.T) {
 				}
 			}
 			if other := sharedColumns(t, stores[1]); len(other) != 0 {
-				t.Errorf("the store that does not pack shares %v", other)
+				t.Errorf("the store without dictionaries shares %v", other)
 			}
 			// The parts read anew from their files hold the same rows.
 			shut()

@@ -14,9 +14,18 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// plannedPart shreds docs into one batch, tells the writer of all its rows
-// and writes them in blocks of blockRows rows.
+// plannedPart is batchPart with a writer that may give its part
+// dictionaries and is told of all its rows.
 func plannedPart(t testing.TB, docs []string, blockRows int, opts Options) *Part {
+	t.Helper()
+	opts.Dictionary = true
+
+	return batchPart(t, docs, blockRows, opts, true)
+}
+
+// batchPart shreds docs into one batch and writes them in blocks of
+// blockRows rows; with tell set it tells the writer of all its rows first.
+func batchPart(t testing.TB, docs []string, blockRows int, opts Options, tell bool) *Part {
 	t.Helper()
 	var buf bytes.Buffer
 	w := NewWriter(&buf, opts)
@@ -29,7 +38,9 @@ func plannedPart(t testing.TB, docs []string, blockRows int, opts Options) *Part
 	if len(opts.SortKey) > 0 {
 		batch.SortBy(opts.SortKey)
 	}
-	w.Share([]shred.Run{{Batch: batch, From: 0, To: batch.Rows}})
+	if tell {
+		w.Share([]shred.Run{{Batch: batch, From: 0, To: batch.Rows}})
+	}
 	block := shred.NewBatch(shred.Options{})
 	for from := 0; from < batch.Rows; from += blockRows {
 		block.Reset()
@@ -167,6 +178,19 @@ func TestWriterSharesAColumnThatRepeatsAcrossBlocks(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWriterWithoutTheOptionWritesNoDictionary(t *testing.T) {
+	docs := accountDocs(20000, 1500, 61, 5)
+	told := batchPart(t, docs, 2048, Options{}, true)
+	checkDocs(t, told, docs)
+	if told.Shares() {
+		t.Fatal("a writer whose options ask for no dictionary wrote one")
+	}
+	// What the writer is told of the rows changes nothing of such a part.
+	if untold := batchPart(t, docs, 2048, Options{}, false); !bytes.Equal(told.data, untold.data) {
+		t.Fatal("the part differs from the one of a writer that was not told of its rows")
 	}
 }
 

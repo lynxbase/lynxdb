@@ -44,6 +44,12 @@ type Options struct {
 	// are encoded at this writer's level, so that the merge may take them
 	// over as they are stored; unset, those of every part are.
 	Stored func(src *Part) bool
+	// Dictionary lets the part hold a dictionary of its own for the string
+	// columns whose values repeat across its blocks, which then store codes
+	// of it: Share and a merge give it one where that pays. Unset, the part
+	// has none, and a merge turns the codes of the parts it reads back into
+	// strings.
+	Dictionary bool
 }
 
 // Writer encodes batches into a part, one block per batch.

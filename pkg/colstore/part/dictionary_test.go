@@ -99,7 +99,7 @@ func TestDictionaryOfStringsThatDoNotPack(t *testing.T) {
 }
 
 func TestDamageToADictionaryWithGapsIsFound(t *testing.T) {
-	opts := Options{Ordered: true, SortKey: sharedKey}
+	opts := Options{Ordered: true, SortKey: sharedKey, Dictionary: true}
 	var srcs []*Part
 	for i := range 3 {
 		srcs = append(srcs, plannedPart(t, keyedDocs(int64(i+1), 12000, 400, 1200), 2048, opts))

@@ -692,9 +692,10 @@ func (w *Writer) dropPlans() {
 // those of one length for the most part, of which at least one in four
 // repeats an earlier one, and that take a quarter less so than in the forms
 // of single blocks. The batches may change once it returns. A part written
-// without it has no dictionary.
+// without it, or by a writer whose options leave Dictionary unset, has no
+// dictionary.
 func (w *Writer) Share(runs []shred.Run) {
-	if w.err != nil || w.rows > 0 || !w.packs(vec.KindString) {
+	if !w.opts.Dictionary || w.err != nil || w.rows > 0 || !w.packs(vec.KindString) {
 		return
 	}
 	rows := 0
