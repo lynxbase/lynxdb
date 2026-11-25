@@ -619,8 +619,9 @@ func (r *scanRun) byTime(lists *scanLists) {
 	}
 	// No row is kept beyond the range of the scan or the first unit, so no
 	// bound rules out the last unit when that reaches as far as they do:
-	// every unit is then scanned, whatever their order.
-	if (latest && far >= min(near, r.maxT)) || (!latest && far <= max(near, r.minT)) {
+	// every unit is then scanned, and several goroutines take them in no
+	// order anyway.
+	if r.workers > 1 && ((latest && far >= min(near, r.maxT)) || (!latest && far <= max(near, r.minT))) {
 		r.each(r.workers, 0, n, func(worker int, b *part.Block, i int) bool { return r.unbound(worker, b, &r.units[i]) })
 
 		return
