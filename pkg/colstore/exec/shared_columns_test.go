@@ -133,6 +133,11 @@ func TestSharedColumnsAnswerAsOthersDo(t *testing.T) {
 			}
 			for name, plan := range plans {
 				for _, workers := range []int{1, 4} {
+					// Rows taken in no order are whichever a goroutine
+					// has first: one goroutine takes the same ones.
+					if sorted, ok := plan.(*exec.Sort); ok && len(sorted.By) == 0 && workers > 1 {
+						continue
+					}
 					answer := func(snap *colstore.Snapshot) []string {
 						res, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: workers})
 						if err != nil {
