@@ -58,7 +58,7 @@ For some grouped queries the executor can also work in key order. A string equal
 
 The writer hashes lowercased tokens from strings. A token is a consecutive run of letters or digits, so `upstream_timeout=504` contributes `upstream`, `timeout` and `504`. Text nested in variant values also contributes tokens. The writer can tokenize distinct dictionary values once when the column uses a dictionary.
 
-Each block can hold separate filters for large encoded string or variant columns and a shared filter for the remaining columns. The dedicated filter threshold is 16 KiB of encoded column data.
+Each block can hold separate filters for large encoded string or variant columns and a shared filter for the remaining columns. The dedicated filter threshold is 16 KiB of encoded column data. A column that the block stores as codes of a part dictionary counts by the size of its strings: a false answer for it costs dictionary reads, not the block's codes.
 
 A filter divides its distinct token hashes into equal-size cells. The high bits select a cell. Within it, the writer stores reduced hash values in sorted order using an encoding based on Elias and Fano. The probe looks for the reduced value in that one cell. A cell packed beyond its capacity answers “possibly present” for every probe. Each cell stores fingerprints alone, so no probe returns row numbers.
 
@@ -81,6 +81,10 @@ The compiler only probes tokens every match must contain. A prefix or substring 
 After opening a block directory, the executor can use presence counts, constant values and integer bounds. A predicate such as `status >= 500` can rule out a block whose integer maximum is 499, provided no other compatible type can satisfy it. A constant can settle a predicate for all present rows. Sparse presence still determines which rows actually hold the field.
 
 When the block must be read, a dictionary-backed predicate can evaluate each distinct value once and apply the result to its row codes. Some equality paths look up a dictionary code or match packed strings directly in their encoded chunk. Once the executor identifies matching rows, it can defer reading projection-only columns until it needs them.
+
+For a column stored as codes of a part dictionary, a predicate on its strings is evaluated once per distinct value of the part, by whichever scan goroutine first meets the code, and the rows of every block reuse the answer. Before it reads any string, the executor checks a pattern against the layout of the dictionary: the bytes that each position of its packed strings can hold. A word that this layout cannot spell reads none of the packed strings, and only the few strings of other lengths are tested.
+
+Hash aggregations use the same codes. Rows are grouped, counted or marked for a distinct count by code while the scan is in a part, and each group or distinct value is turned into its string once when the scan has left the part. Plans that need the strings per row, such as a distinct count grouped by the same column or a minimum of its strings, read them as before.
 
 Some dictionaries store exact counts by value. A part can also keep exact counts in its footer for a path whose stored values are all strings, when the writer can count every value and the distinct values fit within the format's limits of 256 values and 64 KiB of string bytes per path. Missing rows are tracked separately from the counted values.
 
@@ -122,7 +126,7 @@ The executor can skip parts and blocks outside the interval and narrow compatibl
 
 When the standard query endpoint returns a completed columnar result, look at `meta.stats`. The scan reports how many blocks it opened and how many it skipped by time, key, tokens, cached misses and column statistics. `skipped_by_stats` describes rejected blocks whose directories were already open, so it is separate from the checks before opening a block. Free-text searches also report the number of columns searched or skipped by filters.
 
-Three counters report when an aggregation used metadata. `counted_by_index` records blocks aggregated with the part index, `counted_by_entries` counts blocks that also read dictionary entries, and `counted_by_time` counts blocks handled by the time-bucket path. The response can include an ordered aggregation flag or a reason for switching to hash aggregation. The counters describe executor work. An opened block may already be in the operating system's page cache.
+Three counters report when an aggregation used metadata. `counted_by_index` records blocks aggregated with the part index, `counted_by_entries` counts blocks that also read dictionary entries, and `counted_by_time` counts blocks handled by the time-bucket path. For part dictionaries, `aggregated_by_code` counts blocks aggregated by their codes, `columns_filtered_by_code` counts block columns that a predicate filtered by code, and `columns_ruled_out_by_dictionary` counts those left unread because the dictionary's layout ruled the pattern out. The response can include an ordered aggregation flag or a reason for switching to hash aggregation. The counters describe executor work. An opened block may already be in the operating system's page cache.
 
 ## Code entry points
 
