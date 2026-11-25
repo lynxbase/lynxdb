@@ -37,8 +37,13 @@ const (
 	denseFill = 8
 	// logShare is the part of a worker's share of the query's budget that
 	// the groups it holds for the ranges of a part may take before it
-	// merges them into the ranges.
-	logShare = 4
+	// merges them into the ranges, logRepeats the number of them for every
+	// code of the part that it holds at most, since more would not find the
+	// ranges any warmer, and tallyRows the rows that it has room for in a
+	// range to begin with.
+	logShare   = 4
+	logRepeats = 4
+	tallyRows  = 256
 	// maxOthers bounds the combinations of the other keys that a query
 	// numbers for the groups of a key of codes, and otherRepeats is the
 	// number of rows that a block must have for each of those it may hold.
@@ -92,9 +97,10 @@ type codedGroups struct {
 	last, single bool
 	// shift turns a code into the number of its range and spread that
 	// number into the partition of a worker's log; limit is the number of
-	// groups that a range holds before they are handed on.
+	// groups that a range holds before they are handed on, and held the
+	// number that a worker holds before it merges them into the ranges.
 	shift, spread uint
-	limit         int
+	limit, held   int
 	ranges        []codeRange
 }
 
@@ -171,6 +177,13 @@ type codedWorker struct {
 	// the hash of a record, then the id of what its other keys hold when
 	// the plan has other keys, and the words of its state.
 	log *vec.KeyPartitions
+	// tallies holds, per range, the codes of the rows that wait to be
+	// counted there, for a plan that counts the rows of every value of one
+	// key and nothing else; tallied is the number of those codes.
+	tallies [][]uint32
+	tallied int
+	// logged is the number of groups in the log.
+	logged int
 	// other is the key of what the other keys of a group hold, as the
 	// query numbers it.
 	other []byte
@@ -210,8 +223,8 @@ func (c *codedWorker) open() error {
 	return nil
 }
 
-// count notes that the open block was aggregated by code.
-func (c *codedWorker) count() {
+// byCode notes that the open block was aggregated by code.
+func (c *codedWorker) byCode() {
 	if !c.counted {
 		c.counted = true
 		c.blocks++
@@ -283,6 +296,7 @@ func (c *codedWorker) groupsFor(d *part.Dictionary, key int) *codedGroups {
 		cp.mu.Unlock()
 		if c.log == nil {
 			c.log = vec.NewKeyPartitions(a.w.arena, maxRangeBits)
+			c.tallies = make([][]uint32, 1<<maxRangeBits)
 		}
 	}
 	if c.groups.key != key {
@@ -301,6 +315,13 @@ func newCodedGroups(d *part.Dictionary, plan *aggPlan, key, workers int) *codedG
 		shift: uint(width - ranges), spread: uint(maxRangeBits - ranges), ranges: make([]codeRange, 1<<ranges),
 	}
 	cg.limit = max(minRangeGroups, stageBudget/4/len(cg.ranges)/(16+8*len(plan.words)))
+	// A group that waits takes its code and, unless it is a row to count,
+	// what a record of a log takes beside its words.
+	size := 4
+	if !cg.single || !plan.rowsOnly {
+		size = 16 + 8*len(plan.words)
+	}
+	cg.held = min(stageBudget/workers/logShare/size, logRepeats*d.Len()+tallyRows)
 
 	return cg
 }
@@ -418,19 +439,112 @@ func (cg *codedGroups) fill(t *codeTable, base uint32) {
 // range on once they reach the limit.
 func (c *codedWorker) drain() {
 	cg, log := c.groups, c.log
-	if cg == nil || log.Size() == 0 {
+	if cg == nil {
 		return
 	}
 	a := c.a
+	if c.tallied != 0 {
+		c.counts(cg)
+	}
+	if log.Size() == 0 {
+		return
+	}
+	c.logged = 0
 	a.drain(log, func(p int) *sync.Mutex { return &cg.ranges[p>>cg.spread].mu }, func(p int) {
 		r := p >> cg.spread
 		cr := &cg.ranges[r]
 		log.Drain(p, func(chunk []byte) { cg.merge(&cr.codeTable, r, chunk) })
-		if !cr.dense && cr.n >= cg.limit {
-			a.w.x.push(handover{groups: cg, table: cr.codeTable, r: r, bytes: cr.bytes()})
-			cr.codeTable = codeTable{}
-		}
+		cg.handOn(a.w.x, r)
 	})
+}
+
+// handOn hands the groups of range r, which the caller holds, on to be
+// turned into strings once they reach the limit.
+func (cg *codedGroups) handOn(x *execution, r int) {
+	if cr := &cg.ranges[r]; !cr.dense && cr.n >= cg.limit {
+		x.push(handover{groups: cg, table: cr.codeTable, r: r, bytes: cr.bytes()})
+		cr.codeTable = codeTable{}
+	}
+}
+
+// tally notes a row for each of codes, to be counted in the ranges of the
+// part once the worker holds its share of them.
+func (c *codedWorker) tally(cg *codedGroups, codes []uint32) {
+	a := c.a
+	shift, tallies := cg.shift, c.tallies
+	for _, code := range codes {
+		r := code >> shift
+		held := tallies[r]
+		if len(held) == cap(held) {
+			held = append(mem.Raw[uint32](a.w.arena, 0, max(2*cap(held), tallyRows)), held...)
+		}
+		held = held[:len(held)+1]
+		held[len(held)-1] = code
+		tallies[r] = held
+	}
+	if c.tallied += len(codes); c.tallied > cg.held {
+		c.counts(cg)
+	}
+}
+
+// counts adds the rows that the worker has noted to the groups of their
+// codes: in the ranges that no other worker holds first, then in the
+// others as they come free.
+func (c *codedWorker) counts(cg *codedGroups) {
+	a := c.a
+	x := a.w.x
+	if a.order == 0 {
+		a.order = int(x.unstaged.Add(1))
+	}
+	take := func(r int) {
+		cr := &cg.ranges[r]
+		cg.count(&cr.codeTable, r, c.tallies[r])
+		c.tallies[r] = c.tallies[r][:0]
+		cg.handOn(x, r)
+	}
+	n := len(cg.ranges)
+	first := (a.order - 1) * n / len(x.workers)
+	busy := a.s.busy[:0]
+	for i := 0; i < n; i++ {
+		r := (first + i) % n
+		if len(c.tallies[r]) == 0 {
+			continue
+		}
+		if mu := &cg.ranges[r].mu; mu.TryLock() {
+			locked(mu, take, r)
+		} else {
+			busy = append(busy, uint32(r))
+		}
+	}
+	for _, r := range busy {
+		mu := &cg.ranges[r].mu
+		mu.Lock()
+		locked(mu, take, int(r))
+	}
+	a.s.busy, c.tallied = busy, 0
+}
+
+// count adds a row to the group of each of codes, which are of range r, in
+// the table of the range.
+func (cg *codedGroups) count(t *codeTable, r int, codes []uint32) {
+	base := uint32(r) << cg.shift
+	for len(codes) != 0 && !t.dense {
+		if g, fresh := t.group(uint64(codes[0])); fresh {
+			t.words = append(wordPool.Grow(t.words, 1), 1)
+		} else {
+			t.words[g]++
+		}
+		if codes = codes[1:]; t.n*denseFill >= 1<<cg.shift {
+			cg.fill(t, base)
+		}
+	}
+	if !t.dense {
+		return
+	}
+	words := t.words
+	for _, code := range codes {
+		words[code-base]++
+	}
 }
 
 // codedBlock groups the n selected rows of the open block by the code that
@@ -460,6 +574,12 @@ func (a *aggWorker) codedBlock(n int, idx []uint32, domain int) (bool, error) {
 		codes = s.picked
 	}
 	codes = codes[:n]
+	if cg.single && a.plan.rowsOnly {
+		c.byCode()
+		c.tally(cg, codes)
+
+		return true, nil
+	}
 	s.gid = sized(s.gid, n)
 	gid := s.gid
 	// A run of rows with one key is a group of the block.
@@ -511,7 +631,7 @@ func (a *aggWorker) codedBlock(n int, idx []uint32, domain int) (bool, error) {
 	if err := a.feed(&target{words: s.lwords, gid: gid}, n, idx); err != nil {
 		return true, err
 	}
-	c.count()
+	c.byCode()
 	var other [4]byte
 	held := other[:0]
 	if !cg.single {
@@ -522,7 +642,7 @@ func (a *aggWorker) codedBlock(n int, idx []uint32, domain int) (bool, error) {
 		binary.LittleEndian.PutUint32(other[:], uint32(key>>32))
 		c.log.AddKey(uint64(code>>cg.shift<<cg.spread)<<32|uint64(code), 0, false, held, s.lwords[g*stride:(g+1)*stride], nil)
 	}
-	if c.log.Size() > stageBudget/len(a.w.x.workers)/logShare {
+	if c.logged += len(keys); c.logged > cg.held {
 		c.drain()
 	}
 
@@ -598,7 +718,7 @@ func (a *aggWorker) codedValues(i int, ref *part.ColumnRef, d *part.Dictionary, 
 		}
 	}
 	a.count(arg, t, gid, count)
-	c.count()
+	c.byCode()
 
 	return true, nil
 }
@@ -687,19 +807,26 @@ func (c *codedWorker) mark(d int, t *target, codes, gid, rows []uint32, count in
 
 		return true
 	}
-	last, bm := ^uint32(0), []uint64(nil)
+	// The bits of a group that the worker has asked for before are found
+	// without a call.
+	held, global := c.maps[d], t.global
 	for j, g := range gid[:count] {
-		if g != last {
-			if bm = c.bitmap(d, t.global[g]); bm == nil {
+		id := global[g]
+		var bm []uint64
+		if int(id) < len(held) {
+			bm = held[id]
+		}
+		if bm == nil {
+			if bm = c.bitmap(d, id); bm == nil {
 				return false
 			}
-			last = g
+			held = c.maps[d]
 		}
-		r := j
+		code := codes[j]
 		if rows != nil {
-			r = int(rows[j])
+			code = codes[rows[j]]
 		}
-		setBit(bm, codes[r])
+		setBit(bm, code)
 	}
 
 	return true
