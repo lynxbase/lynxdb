@@ -50,6 +50,10 @@ type scratch struct {
 	codes   [][]uint32
 	codesOK []bool
 	packed  []uint32
+	// fresh holds the codes of a block whose strings a predicate has not
+	// tested yet, and spelled those strings.
+	fresh   []uint32
+	spelled vec.Column
 	// views show the rows of a window of a shared block, a view per column
 	// slot that viewed marks as set for the open window.
 	views  []vec.Window
@@ -114,6 +118,12 @@ type worker struct {
 	// searched and unsearched count the columns that matches over every
 	// string column decoded and those that a token filter spared them.
 	searched, unsearched int64
+	// judged holds what the predicates of the query give for the strings of
+	// the part dictionaries that the worker met; judgedColumns counts the
+	// columns of blocks that it filtered by their codes, and ruledOut those
+	// that the layout of their dictionary spared it.
+	judged                  map[verdictKey]*verdicts
+	judgedColumns, ruledOut int64
 	// byTime counts the blocks whose rows were counted from their rows by
 	// bucket of time, and timeMissed by reason those of a count by buckets
 	// of time that were counted row by row.
@@ -242,7 +252,7 @@ func (w *worker) held() int {
 	for i := range w.codes {
 		n += 4 * used(w.codes[i])
 	}
-	n += 4 * used(w.packed)
+	n += 4*used(w.packed) + 4*cap(w.fresh) + w.spelled.Retained()
 	for i := range w.outs {
 		n += w.outs[i].held()
 	}

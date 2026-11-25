@@ -248,6 +248,15 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 
 			continue
 		}
+		if !inside && ref.Shared() {
+			found, err := w.anyCodes(p, ref, m)
+			if err != nil {
+				return none, err
+			}
+			hit = hit || found
+
+			continue
+		}
 		w.searched++
 		c := &w.anyCol
 		if err := w.b.DecodeValues(ref, c); err != nil {
@@ -668,6 +677,9 @@ func (w *worker) evalStrEq(p *pred, depth int) (verdict, error) {
 }
 
 func (w *worker) evalStr(p *pred, depth int) (verdict, error) {
+	if d, ref := w.dictionary(p.path); d != nil {
+		return w.evalCodes(p, d, ref, depth)
+	}
 	c, err := w.column(p.path, vec.KindString)
 	if err != nil || c == nil {
 		return none, err

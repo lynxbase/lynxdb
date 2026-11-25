@@ -93,6 +93,10 @@ type execution struct {
 	// others numbers, for the groups of a key of codes, what the other
 	// keys of the plan hold.
 	others *sharedGroups
+	// verdicts holds what the predicates of the filter give for the
+	// strings of part dictionaries.
+	verdictMu sync.Mutex
+	verdicts  map[verdictKey]*verdicts
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
 	// rows is the number of rows the workers aggregated.
@@ -304,6 +308,8 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		res.Stats.BlocksMatched += w.blocks
 		res.Stats.RowsMatched += w.matched
 		res.Stats.AggregatedByCode += w.agg.coded.blocks
+		res.Stats.ColumnsFilteredByCode += w.judgedColumns
+		res.Stats.ColumnsRuledOutByDictionary += w.ruledOut
 		res.Stats.CountedByTime += w.byTime
 		res.Stats.TimeMissedFilter += w.timeMissed[missFilter]
 		res.Stats.TimeMissedRecord += w.timeMissed[missRecord]
@@ -336,6 +342,9 @@ func (x *execution) held() int64 {
 	for i := range x.mergers {
 		n += x.mergers[i].held()
 	}
+	for _, v := range x.verdicts {
+		n += 8 * cap(v.bits)
+	}
 	for i := range x.parts {
 		n += x.parts[i].held()
 	}
@@ -350,6 +359,7 @@ func (x *execution) held() int64 {
 
 func (x *execution) release() {
 	x.releaseCoded()
+	x.releaseVerdicts()
 	for _, s := range []*sharedGroups{x.shared, x.others} {
 		if s != nil {
 			s.release()

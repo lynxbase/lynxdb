@@ -53,6 +53,13 @@ type Stats struct {
 	// distinct values were counted, by the codes of a part dictionary
 	// without their strings.
 	AggregatedByCode int64
+	// ColumnsFilteredByCode counts the columns of blocks that a predicate
+	// on their strings selected rows of by the codes of a part dictionary,
+	// testing a string once for the part, and ColumnsRuledOutByDictionary
+	// those that it left unread because the layout of the dictionary tells
+	// that none of its strings holds the pattern.
+	ColumnsFilteredByCode       int64
+	ColumnsRuledOutByDictionary int64
 	// HeldBytes is the memory the query held at its end: arenas, logs and
 	// reusable buffers.
 	HeldBytes int64
