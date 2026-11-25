@@ -94,7 +94,8 @@ type firstTimes struct {
 	bound atomic.Int64
 	mu    sync.Mutex
 	// heap holds the times xored with flip, which orders the first of them
-	// least, as a heap whose root is the greatest.
+	// least: as they came while they are fewer than limit, then as a heap
+	// whose root is the greatest.
 	heap  []int64
 	limit int
 	flip  int64
@@ -103,7 +104,7 @@ type firstTimes struct {
 // newFirstTimes returns the times of the limit latest rows, or of the
 // earliest when latest is unset.
 func newFirstTimes(limit int, latest bool) *firstTimes {
-	f := &firstTimes{limit: limit, heap: make([]int64, 0, limit)}
+	f := &firstTimes{limit: limit, heap: make([]int64, 0, min(limit, 1024))}
 	if latest {
 		f.flip = -1
 	}
@@ -132,31 +133,16 @@ func (f *firstTimes) offer(c *colVec, n int) {
 		at := times[i] ^ flip
 		switch {
 		case len(h) < f.limit:
-			h = append(h, at)
-			for j := len(h) - 1; j > 0; {
-				parent := (j - 1) / 2
-				if h[j] <= h[parent] {
-					break
+			// The times become a heap once they are as many as are kept:
+			// until then every row is one of the first.
+			if h = append(h, at); len(h) == f.limit {
+				for j := len(h)/2 - 1; j >= 0; j-- {
+					sinkTime(h, j)
 				}
-				h[j], h[parent] = h[parent], h[j]
-				j = parent
 			}
 		case at < h[0]:
 			h[0] = at
-			for j := 0; ; {
-				child := 2*j + 1
-				if child >= len(h) {
-					break
-				}
-				if r := child + 1; r < len(h) && h[r] > h[child] {
-					child = r
-				}
-				if h[child] <= h[j] {
-					break
-				}
-				h[j], h[child] = h[child], h[j]
-				j = child
-			}
+			sinkTime(h, 0)
 		}
 	}
 	f.heap = h
@@ -164,6 +150,25 @@ func (f *firstTimes) offer(c *colVec, n int) {
 		f.bound.Store(h[0] ^ flip)
 	}
 	f.mu.Unlock()
+}
+
+// sinkTime moves the time at j of a heap whose root is the greatest below
+// the greater times under it.
+func sinkTime(h []int64, j int) {
+	for {
+		child := 2*j + 1
+		if child >= len(h) {
+			return
+		}
+		if r := child + 1; r < len(h) && h[r] > h[child] {
+			child = r
+		}
+		if h[child] <= h[j] {
+			return
+		}
+		h[j], h[child] = h[child], h[j]
+		j = child
+	}
 }
 
 // kindRank orders values of different kinds: booleans, numbers, strings,
