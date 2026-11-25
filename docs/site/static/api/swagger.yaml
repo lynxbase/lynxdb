@@ -560,9 +560,10 @@ paths:
       tags: [Schema]
       summary: Create an index with its own settings
       description: |
-        Creates the index with the sort key, time fields and partition span of the body; a setting left out
-        takes the server's `storage.*` setting. The settings are written to the index's directory before the
-        index takes events and stay with the index across restarts and changes to the configuration.
+        Creates the index with the sort key, time fields, partition span and part dictionary setting of the
+        body; a setting left out takes the server's `storage.*` setting. The settings are written to the
+        index's directory before the index takes events and stay with the index across restarts and changes
+        to the configuration.
         Repeating the call answers `200` with the index when it has every setting the body gives, and `409`
         when it has another; the settings of an index do not change. Needs `ingest` or `admin` scope.
       requestBody:
@@ -2244,6 +2245,9 @@ components:
         partition:
           type: string
           description: Span of time whose events the index keeps apart, such as `1d` or `1h0m0s`
+        part_dictionary:
+          type: boolean
+          description: Whether the parts of the index keep a dictionary for the string columns whose values repeat across their blocks
     IndexResponse:
       type: object
       properties:
@@ -2268,6 +2272,12 @@ components:
         partition:
           type: string
           description: A span from one minute to 366 days, such as `1h` or `1d`. Default `storage.partition`
+        part_dictionary:
+          type: boolean
+          description: >-
+            Keep one dictionary per part for the string columns whose values repeat across its blocks, which
+            then store codes of it: a smaller index and faster hot aggregations and filters on those columns,
+            for a slower load that holds more memory. Default `storage.part_dictionary`, which is `false`
     CompactResponse:
       type: object
       properties:

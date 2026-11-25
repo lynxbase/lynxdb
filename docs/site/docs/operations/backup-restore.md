@@ -33,7 +33,7 @@ LynxDB keeps everything it stores in the `data_dir` directory, one subdirectory 
 - A `.part` file is immutable once written. New events and merges add part files; a merge then deletes the parts it replaced.
 - `MANIFEST` is an append-only log of the changes to the set of live parts. A change is visible only after its record is on disk.
 - `MANIFEST.end` helps detect a manifest that lost records.
-- `settings.json` records the saved sort key, timestamp fields and partition width.
+- `settings.json` records the saved sort key, timestamp fields, partition width and part dictionary setting.
 
 When a store opens, it reads the manifest, opens every part it names, and deletes the files no record names: temporary files of writes that did not finish, and parts a merge replaced. A part file that no record names while the manifest may have lost records is moved to `lost+found/` in the index directory instead of being deleted. A manifest that names a missing or damaged part, or that is shorter than its end mark, stops the server at startup and leaves every file as it was.
 

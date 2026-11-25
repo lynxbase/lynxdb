@@ -15,7 +15,7 @@ Shippers that speak Elasticsearch, Splunk HEC or OTLP can also use the [compatib
 
 ## How events are stored
 
-Every index keeps its events in a columnar store of its own. An index comes into being with its first events, taking the server's `storage.sort_key`, `storage.time_fields` and `storage.partition` as its settings, or with [`PUT /indexes/{index}`](#put-indexesindex), which gives it settings of its own. The settings are written to the index's directory before it takes events, and the index keeps them: changing the `storage` settings affects only indexes created afterwards.
+Every index keeps its events in a columnar store of its own. An index comes into being with its first events, taking the server's `storage.sort_key`, `storage.time_fields`, `storage.partition` and `storage.part_dictionary` as its settings, or with [`PUT /indexes/{index}`](#put-indexesindex), which gives it settings of its own. The settings are written to the index's directory before it takes events, and the index keeps them: changing the `storage` settings affects only indexes created afterwards.
 
 - **Time.** An event's time is the value of the first of the index's time fields that it holds; `storage.time_fields` gives `_time`, `timestamp`, `@timestamp`, `time` and `ts`. The value is a number of seconds, milliseconds, microseconds or nanoseconds since the Unix epoch, told apart by its size, or text in one of the [forms that raw ingest reads](#post-ingestraw). An event without one gets the time it arrived.
 - **Text.** `POST /ingest` takes JSON objects only and counts any other line as failed. `POST /ingest/raw` keeps a line of text as an event holding it in `_raw`. A JSON event has no `_raw`.
@@ -143,8 +143,8 @@ curl -s localhost:3100/api/v1/indexes
 {
   "data": {
     "indexes": [
-      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"},
-      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"}
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d", "part_dictionary": false},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d", "part_dictionary": false}
     ]
   }
 }
@@ -159,7 +159,7 @@ curl -s localhost:3100/api/v1/indexes
 | `merges_running` | Merges of the index's files under way |
 | `runs_to_merge` | Sorted runs that background merging is still to merge, those of a past partition that waits for events to stop arriving included; the index is quiet when this and `merges_running` are both 0 |
 | `first_event`, `last_event` | Times of the earliest and latest event; absent for an index without stored events |
-| `sort_key`, `time_fields`, `partition` | The settings of the index, see [`PUT /indexes/{index}`](#put-indexesindex) |
+| `sort_key`, `time_fields`, `partition`, `part_dictionary` | The settings of the index, see [`PUT /indexes/{index}`](#put-indexesindex) |
 
 Query an index with `source=<name>`:
 
@@ -178,7 +178,7 @@ curl -s localhost:3100/api/v1/indexes/bluesky
 ```
 
 ```json
-{"data": {"name": "bluesky", "events": 2, "bytes": 889, "filter_bytes": 32, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2024-11-21T16:25:49.000167Z", "last_event": "2024-11-21T16:25:49.00028Z", "sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d"}}
+{"data": {"name": "bluesky", "events": 2, "bytes": 889, "filter_bytes": 32, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2024-11-21T16:25:49.000167Z", "last_event": "2024-11-21T16:25:49.00028Z", "sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d", "part_dictionary": false}}
 ```
 
 An index that does not exist answers `404 NOT_FOUND`.
@@ -194,7 +194,7 @@ curl -s -X PUT localhost:3100/api/v1/indexes/bluesky \
 ```
 
 ```json
-{"data": {"name": "bluesky", "events": 0, "bytes": 0, "filter_bytes": 0, "parts": 0, "merges_running": 0, "runs_to_merge": 0, "sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d"}}
+{"data": {"name": "bluesky", "events": 0, "bytes": 0, "filter_bytes": 0, "parts": 0, "merges_running": 0, "runs_to_merge": 0, "sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d", "part_dictionary": false}}
 ```
 
 | Setting | Default | Value |
@@ -202,6 +202,7 @@ curl -s -X PUT localhost:3100/api/v1/indexes/bluesky \
 | `sort_key` | `storage.sort_key` | Up to 32 field paths whose values order the rows of the index, the first the most significant; `[]` orders them by time |
 | `time_fields` | `storage.time_fields` | Up to 32 field paths whose value becomes the time of an event, tried in their order |
 | `partition` | `storage.partition` | The span of time whose events are kept apart, from `1m` to `366d`, such as `1h` or `1d`; retention drops whole partitions |
+| `part_dictionary` | `storage.part_dictionary` | `true` keeps one dictionary per part for the string columns whose values repeat across its blocks, `false` none; see [Part dictionary](../configuration/storage.md#part-dictionary) for what it costs and gains |
 
 Every setting is optional, and the body may be left out. A field path names a nested member by its path, such as `commit.collection`; it has no empty segment and no control character, and a list names it once.
 

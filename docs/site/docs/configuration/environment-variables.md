@@ -46,6 +46,7 @@ lynxdb query 'source=main level=ERROR | stats count() by host'
 | `LYNXDB_STORAGE_FLUSH_INTERVAL` | `storage.flush_interval` | `0s` (one second) |
 | `LYNXDB_STORAGE_TIME_FIELDS` | `storage.time_fields` | `_time,timestamp,@timestamp,time,ts` |
 | `LYNXDB_STORAGE_SORT_KEY` | `storage.sort_key` | empty |
+| `LYNXDB_STORAGE_PART_DICTIONARY` | `storage.part_dictionary` | `false` |
 
 ### Query
 

@@ -27,7 +27,7 @@ Columns also compress and evaluate well: a column of few distinct values is a di
 
 ## A Store per Index, Partitioned by Time
 
-**Decision**: Each index has its own directory and persists the settings for its sort key, time fields and partition width. The default partition width is 24 hours.
+**Decision**: Each index has its own directory and persists the settings for its sort key, time fields, partition width and part dictionaries. The default partition width is 24 hours.
 
 **Alternatives**: One table for all indexes with the index as a column; one time-ordered set of files per index without partitions.
 
