@@ -13,16 +13,17 @@ import (
 // whose events are not yet written has no first or last event.
 func indexEntry(ix columnar.IndexStats) map[string]interface{} {
 	entry := map[string]interface{}{
-		"name":           ix.Name,
-		"events":         ix.Rows,
-		"bytes":          ix.Bytes,
-		"filter_bytes":   ix.FilterBytes,
-		"parts":          ix.Parts,
-		"merges_running": ix.Merges,
-		"runs_to_merge":  ix.RunsToMerge,
-		"sort_key":       ix.Settings.SortKey,
-		"time_fields":    ix.Settings.TimeFields,
-		"partition":      config.Duration(ix.Settings.Partition).String(),
+		"name":            ix.Name,
+		"events":          ix.Rows,
+		"bytes":           ix.Bytes,
+		"filter_bytes":    ix.FilterBytes,
+		"parts":           ix.Parts,
+		"merges_running":  ix.Merges,
+		"runs_to_merge":   ix.RunsToMerge,
+		"sort_key":        ix.Settings.SortKey,
+		"time_fields":     ix.Settings.TimeFields,
+		"partition":       config.Duration(ix.Settings.Partition).String(),
+		"part_dictionary": ix.Settings.PartDictionary,
 	}
 	if ix.Parts > 0 {
 		entry["first_event"] = ix.First.Format(time.RFC3339Nano)

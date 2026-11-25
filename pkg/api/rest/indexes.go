@@ -16,9 +16,10 @@ import (
 // indexSettingsRequest is the body of PUT /api/v1/indexes/{index}; a field
 // left out takes the server's storage setting.
 type indexSettingsRequest struct {
-	SortKey    []string `json:"sort_key"`
-	TimeFields []string `json:"time_fields"`
-	Partition  *string  `json:"partition"`
+	SortKey        []string `json:"sort_key"`
+	TimeFields     []string `json:"time_fields"`
+	Partition      *string  `json:"partition"`
+	PartDictionary *bool    `json:"part_dictionary"`
 }
 
 // handleCreateIndex creates an index with the settings of the body, or
@@ -40,7 +41,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	want := columnar.Settings{SortKey: req.SortKey, TimeFields: req.TimeFields}
+	want := columnar.Settings{SortKey: req.SortKey, TimeFields: req.TimeFields, PartDictionary: req.PartDictionary}
 	if req.Partition != nil {
 		span, err := config.ParseDuration(*req.Partition)
 		if err != nil || span <= 0 {
