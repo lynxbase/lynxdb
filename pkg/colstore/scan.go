@@ -642,7 +642,10 @@ func (r *scanRun) byTime(lists *scanLists) {
 		q.fill(n)
 		r.each(r.workers, 0, n, func(worker int, b *part.Block, i int) bool { return r.one(worker, b, i, &units[i]) })
 	default:
-		r.paced(q, lists)
+		// A first block that holds every row the caller keeps rules out
+		// the blocks that lie wholly beyond it.
+		q.fill(1)
+		r.paced(q, lists, (latest && far < units[0].first) || (!latest && far > units[0].last))
 	}
 }
 
@@ -660,19 +663,22 @@ const orderedAhead = 256
 // what a round opens depends on the rows of the rounds before it and not
 // on how the goroutines fall.
 //
-// The first round opens one block. When that holds every row the caller
-// keeps, the bound has moved and the goroutines take what it leaves at
-// once, each unit unless the bound rules it out as its turn comes: blocks
-// that fill the result one by one move the bound faster than rounds
-// follow it. Otherwise, while the caller has fewer rows than it wants, a
-// round opens half again as many blocks as the rows so far say are still
-// needed, going by all of them or by those of the last round, whichever
-// came slower, and twice as many as the last round when that brought none;
-// once the bound has moved, a round opens what the bound leaves. No round
-// opens more blocks than all before it together, or than there are
-// goroutines, so that rows which come unevenly cost no more blocks than
-// the scan has opened already.
-func (r *scanRun) paced(q *unitQueue, lists *scanLists) {
+// The first round opens one block when alone is set, which says that some
+// block lies wholly beyond the first: one block may then rule out others,
+// and where none lies beyond it the first round opens a block for each
+// goroutine. When the one block holds every row the caller keeps, the
+// bound has moved and the goroutines take what it leaves at once, each
+// unit unless the bound rules it out as its turn comes: blocks that fill
+// the result one by one move the bound faster than rounds follow it.
+// Otherwise, while the caller has fewer rows than it wants, a round opens
+// half again as many blocks as the rows so far say are still needed, going
+// by all of them or by those of the last round, whichever came slower, and
+// twice as many as the last round when that brought none; once the bound
+// has moved, a round opens what the bound leaves. No round opens more
+// blocks than all before it together, or than there are goroutines, so
+// that rows which come unevenly cost no more blocks than the scan has
+// opened already.
+func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 	n := len(r.units)
 	units := q.out[:n]
 	// Without tokens and a range every unit is opened unchecked.
@@ -693,7 +699,10 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists) {
 			end = e
 		}
 	}
-	round, opened, had := 1, 0, 0
+	round, opened, had := r.workers, 0, 0
+	if alone {
+		round = 1
+	}
 	for r.ctx.Err() == nil {
 		bound = r.opts.Bound.Load()
 		given := min(end, len(q.out))
