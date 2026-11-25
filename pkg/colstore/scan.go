@@ -391,159 +391,208 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	var next, read, skipped, late atomic.Int64
-	// one scans a unit and reports whether the scan goes on.
-	one := func(worker int, b *part.Block, u scanUnit) bool {
-		if opts.Bound != nil {
-			if bound := opts.Bound.Load(); (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound) {
-				late.Add(1)
-
-				return true
-			}
-		}
-		p := parts[u.part].Part
-		// A block that the range cuts may hold no row inside it, which its
-		// rows by bucket of time tell; reading them takes microseconds a
-		// block, so the scan's goroutines do it.
-		if (u.first < minT || u.last > maxT) && p.NoneWithin(int(u.block), minT, maxT) {
-			late.Add(1)
-			if empty := empties[u.part]; empty != nil {
-				empty.Add(int(u.block))
-			}
-
-			return true
-		}
-		may, err := mayContainAll(p, int(u.block), opts.Tokens)
-		for k := 0; k < len(sets) && may && err == nil; k++ {
-			if id := ids[int(u.ids)+k]; id != unprobed {
-				may, err = mayContainSet(p, int(u.block), id, sets[k].Hashes)
-			}
-		}
-		if err != nil {
-			cancel(err)
-
-			return false
-		}
-		if !may {
-			skipped.Add(1)
-			if empty := empties[u.part]; empty != nil {
-				empty.Add(int(u.block))
-			}
-
-			return true
-		}
-		if err := p.OpenBlock(int(u.block), b); err != nil {
-			cancel(err)
-
-			return false
-		}
-		read.Add(1)
-		if err := fn(worker, p, b); err != nil {
-			cancel(err)
-
-			return false
-		}
-
-		return true
+	r := &scanRun{
+		ctx: ctx, cancel: cancel, opts: &opts, fn: fn, parts: parts, units: units, ids: ids, empties: empties,
+		minT: minT, maxT: maxT, workers: workers,
 	}
-	// run scans the units from next on with the goroutines numbered below
-	// workers, up to the unit numbered end.
-	run := func(workers int, end int64) {
-		var wg sync.WaitGroup
-		for w := 0; w < workers; w++ {
-			wg.Add(1)
-			go func(worker int) {
-				defer wg.Done()
-				// A fault while reading mapped part bytes becomes a panic,
-				// which the recover below turns into a scan error.
-				debug.SetPanicOnFault(true)
-				defer func() {
-					if r := recover(); r != nil {
-						cancel(fmt.Errorf("colstore: scan worker failed: %v", r))
-					}
-				}()
-				b := blockPool.Get()
-				defer blockPool.Put(b)
-				for ctx.Err() == nil {
-					i := next.Add(1) - 1
-					if i >= end {
-						next.Add(-1)
-
-						return
-					}
-					if !one(worker, b, units[i]) {
-						return
-					}
-				}
-			}(w)
-		}
-		wg.Wait()
-	}
-	// grow returns how many blocks to take after a round of wave blocks did
-	// not end the scan: twice as many, or half again as many as the rows
-	// kept so far say the caller still needs.
-	grow := func(wave int) int {
-		wave *= 2
-		if opts.Kept == nil {
-			return wave
-		}
-		have, want := opts.Kept()
-		if done := next.Load(); have > 0 && want > have && done > 0 {
-			need := int64(want-have)*done/int64(have)*3/2 + 1
-			wave = max(wave, int(min(need, int64(workers))))
-		}
-
-		return wave
-	}
+	one := func(worker int, b *part.Block, i int) bool { return r.one(worker, b, &units[i]) }
 	// The first blocks in the order of time often hold every row that the
 	// caller keeps, and it then moves the bound past the others. Where some
 	// block lies wholly beyond the first one, a single block is scanned
 	// first and twice as many each time, until the bound moves; the blocks
 	// that the bound then leaves are scanned at once.
-	ruledOut := func(u scanUnit, bound int64) bool {
-		return (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound)
-	}
+	n, at := len(units), 0
 	beyond := false
-	if n := len(units); opts.Bound != nil && n > rampFrom {
+	if opts.Bound != nil && n > rampFrom {
 		beyond = (opts.ByTime < 0 && units[n-1].last < units[0].first) || (opts.ByTime > 0 && units[n-1].first > units[0].last)
 	}
-	if n := len(units); beyond {
+	if beyond {
 		unmoved := opts.Bound.Load()
-		for wave := 1; wave < workers && ctx.Err() == nil; {
-			at := next.Load()
-			if at >= int64(n) {
-				break
-			}
+		for wave := 1; wave < workers && at < n && ctx.Err() == nil; {
 			bound := opts.Bound.Load()
 			if bound == unmoved {
-				run(wave, min(at+int64(wave), int64(n)))
-				wave = grow(wave)
+				end := min(at+wave, n)
+				r.each(wave, at, end, one)
+				at = end
+				wave = r.grow(wave, at)
 
 				continue
 			}
 			end := at
-			for end < int64(n) && !ruledOut(units[end], bound) {
+			for end < n && !r.ruledOut(&units[end], bound) {
 				end++
 			}
 			if end == at {
 				break
 			}
-			run(workers, end)
+			r.each(workers, at, end, one)
+			at = end
 		}
 	}
-	if opts.Ramp && len(units) > rampFrom {
-		for wave := 1; wave < workers && next.Load() < int64(len(units)) && ctx.Err() == nil; wave = grow(wave) {
-			run(wave, min(next.Load()+int64(wave), int64(len(units))))
+	if opts.Ramp && n > rampFrom {
+		for wave := 1; wave < workers && at < n && ctx.Err() == nil; wave = r.grow(wave, at) {
+			end := min(at+wave, n)
+			r.each(wave, at, end, one)
+			at = end
 		}
 	}
-	run(workers, int64(len(units)))
-	stats.Blocks, stats.SkippedByToken = read.Load(), stats.SkippedByToken+skipped.Load()
-	stats.SkippedByTime += late.Load()
+	r.each(workers, at, n, one)
+	stats.Blocks, stats.SkippedByToken = r.read.Load(), stats.SkippedByToken+r.skipped.Load()
+	stats.SkippedByTime += r.late.Load()
 	if err := context.Cause(ctx); err != nil {
 		return stats, err
 	}
 
 	return stats, nil
+}
+
+// scanRun is what the goroutines of one scan share.
+type scanRun struct {
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	opts       *ScanOptions
+	fn         BlockFunc
+	parts      []*Handle
+	units      []scanUnit
+	ids        []uint32
+	empties    []*part.Misses
+	minT, maxT int64
+	workers    int
+	// next numbers what the goroutines of each take next.
+	next atomic.Int64
+	// read, skipped and late count the units opened, left out by their
+	// tokens and left out by their times.
+	read, skipped, late atomic.Int64
+}
+
+// ruledOut reports whether bound leaves u out of a scan by time.
+func (r *scanRun) ruledOut(u *scanUnit, bound int64) bool {
+	return (r.opts.ByTime < 0 && u.last < bound) || (r.opts.ByTime > 0 && u.first > bound)
+}
+
+// admit reports whether u is to be opened: whether it may hold a row within
+// the range of the scan and with its tokens. It opens no block.
+func (r *scanRun) admit(u *scanUnit) bool {
+	p := r.parts[u.part].Part
+	// A block that the range cuts may hold no row inside it, which its
+	// rows by bucket of time tell; reading them takes microseconds a
+	// block, so the scan's goroutines do it.
+	if (u.first < r.minT || u.last > r.maxT) && p.NoneWithin(int(u.block), r.minT, r.maxT) {
+		r.late.Add(1)
+		if empty := r.empties[u.part]; empty != nil {
+			empty.Add(int(u.block))
+		}
+
+		return false
+	}
+	sets := r.opts.ColumnTokens
+	may, err := mayContainAll(p, int(u.block), r.opts.Tokens)
+	for k := 0; k < len(sets) && may && err == nil; k++ {
+		if id := r.ids[int(u.ids)+k]; id != unprobed {
+			may, err = mayContainSet(p, int(u.block), id, sets[k].Hashes)
+		}
+	}
+	if err != nil {
+		r.cancel(err)
+
+		return false
+	}
+	if !may {
+		r.skipped.Add(1)
+		if empty := r.empties[u.part]; empty != nil {
+			empty.Add(int(u.block))
+		}
+	}
+
+	return may
+}
+
+// open hands the block of u to the scan's function and reports whether the
+// scan goes on.
+func (r *scanRun) open(worker int, b *part.Block, u *scanUnit) bool {
+	p := r.parts[u.part].Part
+	if err := p.OpenBlock(int(u.block), b); err != nil {
+		r.cancel(err)
+
+		return false
+	}
+	r.read.Add(1)
+	if err := r.fn(worker, p, b); err != nil {
+		r.cancel(err)
+
+		return false
+	}
+
+	return true
+}
+
+// one scans u, unless the bound rules it out as its turn comes, and reports
+// whether the scan goes on.
+func (r *scanRun) one(worker int, b *part.Block, u *scanUnit) bool {
+	if r.opts.Bound != nil && r.ruledOut(u, r.opts.Bound.Load()) {
+		r.late.Add(1)
+
+		return true
+	}
+	if !r.admit(u) {
+		return r.ctx.Err() == nil
+	}
+
+	return r.open(worker, b, u)
+}
+
+// each calls do for every number from lo up to hi, in no order, from g
+// goroutines that it numbers from zero, or from the caller's when g is one,
+// until do reports that the scan ends. A panic or a memory fault in do
+// fails the scan.
+func (r *scanRun) each(g, lo, hi int, do func(worker int, b *part.Block, i int) bool) {
+	r.next.Store(int64(lo))
+	work := func(worker int) {
+		// A fault while reading mapped part bytes becomes a panic, which
+		// the recover below turns into a scan error.
+		defer debug.SetPanicOnFault(debug.SetPanicOnFault(true))
+		defer func() {
+			if v := recover(); v != nil {
+				r.cancel(fmt.Errorf("colstore: scan worker failed: %v", v))
+			}
+		}()
+		b := blockPool.Get()
+		defer blockPool.Put(b)
+		for r.ctx.Err() == nil {
+			i := int(r.next.Add(1)) - 1
+			if i >= hi || !do(worker, b, i) {
+				return
+			}
+		}
+	}
+	if g <= 1 {
+		work(0)
+
+		return
+	}
+	var wg sync.WaitGroup
+	for w := range g {
+		wg.Go(func() { work(w) })
+	}
+	wg.Wait()
+}
+
+// grow returns how many blocks to take after a round of wave blocks did not
+// end the scan, done blocks in all: twice as many, or half again as many as
+// the rows kept so far say the caller still needs, up to one for each
+// goroutine.
+func (r *scanRun) grow(wave, done int) int {
+	wave *= 2
+	if r.opts.Kept == nil {
+		return wave
+	}
+	have, want := r.opts.Kept()
+	if have > 0 && want > have && done > 0 {
+		need := int64(want-have)*int64(done)/int64(have)*3/2 + 1
+		wave = max(wave, int(min(need, int64(r.workers))))
+	}
+
+	return wave
 }
 
 func mayContainAll(p *part.Part, block int, tokens []uint64) (bool, error) {
