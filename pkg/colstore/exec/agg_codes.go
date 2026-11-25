@@ -184,9 +184,9 @@ type codedWorker struct {
 	tallied int
 	// logged is the number of groups in the log.
 	logged int
-	// other is the key of what the other keys of a group hold, as the
-	// query numbers it.
-	other []byte
+	// others holds, by the id that the query gives it, the key of what the
+	// other keys of a group hold, once the worker has asked for it.
+	others [][]byte
 	// blocks counts the blocks that the worker aggregated by code, and
 	// counted is set once the open one is among them.
 	blocks  int64
@@ -990,20 +990,24 @@ func (c *codedWorker) resolveGroup(cg *codedGroups, key uint64, state []int64) e
 
 		return nil
 	}
-	// Groups that follow one another often share what their other keys
-	// hold.
-	if id := uint32(key >> 32); len(c.other) == 0 || id != binary.LittleEndian.Uint32(c.other) {
-		c.other = binary.LittleEndian.AppendUint32(c.other[:0], id)
-		c.other = a.w.x.others.key(c.other, id)
+	id := int(key >> 32)
+	for id >= len(c.others) {
+		c.others = append(c.others, nil)
 	}
-	before := 8 + int(binary.LittleEndian.Uint32(c.other[4:]))
-	k := append(s.key[:0], c.other[8:before]...)
+	other := c.others[id]
+	if other == nil {
+		s.key = a.w.x.others.key(s.key[:0], uint32(id))
+		other = a.w.arena.CopyBytes(s.key)
+		c.others[id] = other
+	}
+	before := 4 + int(binary.LittleEndian.Uint32(other))
+	k := append(s.key[:0], other[4:before]...)
 	if none {
 		k = append(k, tagNull)
 	} else {
 		k = appendKeyBytes(k, tagString, s.value, cg.last)
 	}
-	k = append(k, c.other[before:]...)
+	k = append(k, other[before:]...)
 	s.key = k
 	a.stage(keyHash(k), 0, false, k, state)
 
