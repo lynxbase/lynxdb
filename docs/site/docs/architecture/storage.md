@@ -121,7 +121,7 @@ The store attempts to flush outstanding writes at graceful shutdown. A process k
 
 ## Parts
 
-The current part format uses the `LXPT` magic and version 17. The reader requires the current version. A file puts chunks for consecutive blocks in order, with token-filter pages interleaved by group. Part dictionaries and the column directories are stored after the data, followed by the footer and trailer.
+The part format uses the `LXPT` magic and version 16. A part that may hold part dictionaries is version 17. The reader opens both and refuses any other version. A file puts chunks for consecutive blocks in order, with token-filter pages interleaved by group. Part dictionaries and the column directories are stored after the data, followed by the footer and trailer.
 
 ```text
 [header]

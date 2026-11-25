@@ -173,16 +173,17 @@ const aheadGroups = 8
 // hash to them stays within 64 bits.
 const maxFilterBlocks = 1 << 32
 
-// Open validates the footer of a part held in data.
+// Open validates the footer of a part held in data, of formatVersion or of
+// plainVersion.
 func Open(data []byte) (*Part, error) {
-	if len(data) < headerSize+trailerSize ||
-		binary.LittleEndian.Uint32(data) != fileMagic ||
-		binary.LittleEndian.Uint32(data[4:]) != formatVersion {
+	if len(data) < headerSize+trailerSize || binary.LittleEndian.Uint32(data) != fileMagic {
 		return nil, ErrCorrupt
 	}
+	version := binary.LittleEndian.Uint32(data[4:])
 	trailer := data[len(data)-trailerSize:]
-	if binary.LittleEndian.Uint32(trailer[24:]) != fileMagic ||
-		binary.LittleEndian.Uint32(trailer[20:]) != formatVersion {
+	if (version != formatVersion && version != plainVersion) ||
+		binary.LittleEndian.Uint32(trailer[24:]) != fileMagic ||
+		binary.LittleEndian.Uint32(trailer[20:]) != version {
 		return nil, ErrCorrupt
 	}
 	off, size := binary.LittleEndian.Uint64(trailer[0:]), binary.LittleEndian.Uint64(trailer[8:])
@@ -273,7 +274,7 @@ func Open(data []byte) (*Part, error) {
 	p.MinTime = unzigzag(r.uvarint())
 	p.MaxTime = unzigzag(r.uvarint())
 	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath || !p.readCounts(&r) || !p.readTimeCounts(&r) ||
-		!p.readDictionaries(&r, dirsOff) {
+		(version == formatVersion && !p.readDictionaries(&r, dirsOff)) {
 		return nil, ErrCorrupt
 	}
 	// The filters of a group's blocks fill every stripe, those of one

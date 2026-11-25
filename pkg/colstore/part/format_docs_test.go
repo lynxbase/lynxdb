@@ -9,14 +9,14 @@ import (
 )
 
 // A reader refuses a part of any other version, so the storage page has to
-// name the one this build writes.
-func TestStoragePageNamesTheFormatVersion(t *testing.T) {
+// name the ones this build writes.
+func TestStoragePageNamesTheFormatVersions(t *testing.T) {
 	const page = "docs/site/docs/architecture/storage.md"
 	text, err := os.ReadFile(filepath.Join("..", "..", "..", page))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("`LXPT` magic and version %d.", formatVersion)
+	want := fmt.Sprintf("`LXPT` magic and version %d. A part that may hold part dictionaries is version %d.", plainVersion, formatVersion)
 	if !strings.Contains(string(text), want) {
 		t.Fatalf("%s does not say %q", page, want)
 	}

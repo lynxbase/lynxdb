@@ -19,6 +19,9 @@ import (
 //	         the rows of every block by bucket of time, the dictionaries
 //	trailer  footer offset, footer length, footer checksum, version, magic
 //
+// A part whose writer may give it no dictionary is of plainVersion: it has
+// none, its footer ends before them and no block of it stores codes of one.
+//
 // A token's probe reads one cell of a filter, and which n-th of the filter
 // holds it depends on the token alone when n divides the filter's cells. A
 // group cuts each of its filters into as many pieces as it has stripes and
@@ -33,6 +36,7 @@ import (
 const (
 	fileMagic     = 0x5450584c // "LXPT"
 	formatVersion = 17
+	plainVersion  = 16
 
 	headerSize  = 8
 	trailerSize = 28

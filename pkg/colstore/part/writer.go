@@ -324,8 +324,18 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	}
 	var head [headerSize]byte
 	binary.LittleEndian.PutUint32(head[0:], fileMagic)
-	binary.LittleEndian.PutUint32(head[4:], formatVersion)
+	binary.LittleEndian.PutUint32(head[4:], w.version())
 	w.write(head[:])
+}
+
+// version returns the format version of the part: the one with dictionaries
+// when the writer may give it any.
+func (w *Writer) version() uint32 {
+	if w.opts.Dictionary {
+		return formatVersion
+	}
+
+	return plainVersion
 }
 
 func (w *Writer) write(p []byte) {
@@ -1553,7 +1563,10 @@ func (w *Writer) Close() error {
 	footer = binary.AppendUvarint(footer, uint64(len(w.groups)/groupEntrySize))
 	footer = append(footer, w.filters...)
 	footer = append(footer, w.groups...)
-	dicts := w.writeDictionaries()
+	var dicts []byte
+	if w.opts.Dictionary {
+		dicts = w.writeDictionaries()
+	}
 	footer = binary.AppendUvarint(footer, w.off)
 	footer = binary.AppendUvarint(footer, uint64(len(w.dirs)))
 	w.write(w.dirs)
@@ -1578,7 +1591,7 @@ func (w *Writer) Close() error {
 	binary.LittleEndian.PutUint64(trailer[0:], footerOff)
 	binary.LittleEndian.PutUint64(trailer[8:], uint64(len(footer)))
 	binary.LittleEndian.PutUint32(trailer[16:], crc32.Checksum(footer, castagnoli))
-	binary.LittleEndian.PutUint32(trailer[20:], formatVersion)
+	binary.LittleEndian.PutUint32(trailer[20:], w.version())
 	binary.LittleEndian.PutUint32(trailer[24:], fileMagic)
 	w.write(trailer[:])
 	w.dropPlans()
