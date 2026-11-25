@@ -34,7 +34,7 @@ const (
 	// denseFill is the part of the codes of a range that must have a group
 	// for the range to hold a state for every code, found by the code, in
 	// place of a table of the codes that have one.
-	denseFill = 8
+	denseFill = 4
 	// logShare is the part of a worker's share of the query's budget that
 	// the groups it holds for the ranges of a part may take before it
 	// merges them into the ranges, logRepeats the number of them for every
@@ -61,8 +61,10 @@ const (
 	bitsFloor    = 64 << 10
 	bitsPerRow   = 16
 	// bitRangeBits is the number of codes, as a power of two, whose bits
-	// share a range: a few kilobytes for every group.
+	// share a range: a few kilobytes for every group. bitGroups is the
+	// number of groups that a range has room for from the start.
 	bitRangeBits = 16
+	bitGroups    = 8
 )
 
 // minRangeGroups is the least number of groups that a range holds before
@@ -387,11 +389,15 @@ func (c *codedWorker) groupsFor(d *part.Dictionary, key int) *codedGroups {
 		}
 		c.groups = cp.groups
 		cp.mu.Unlock()
-		if c.log == nil {
-			c.log = vec.NewKeyPartitions(a.w.arena, maxRangeBits)
-			c.tallies = make([][]uint32, 1<<maxRangeBits)
-		}
-		if cg := c.groups; cg.room != 0 {
+		switch cg := c.groups; {
+		case cg.room == 0:
+			if c.log == nil {
+				c.log = vec.NewKeyPartitions(a.w.arena, maxRangeBits)
+			}
+		default:
+			if c.tallies == nil {
+				c.tallies = make([][]uint32, 1<<maxRangeBits)
+			}
 			// The ranges of every part share out the same memory.
 			used := d.Len()>>cg.shift + 1
 			if cap(c.tallyRoom) < used*cg.room {
@@ -561,6 +567,8 @@ func (c *codedWorker) drain() {
 	a := c.a
 	if cg.room != 0 {
 		c.counts(cg)
+
+		return
 	}
 	if log.Size() == 0 {
 		return
@@ -569,6 +577,10 @@ func (c *codedWorker) drain() {
 	a.drain(log, func(p int) *sync.Mutex { return &cg.ranges[p>>cg.spread].mu }, func(p int) {
 		r := p >> cg.spread
 		cr := &cg.ranges[r]
+		if cg.single && !cr.dense && cr.n == 0 && log.Len(p) >= 1<<cg.shift {
+			// As many groups as the range has codes: most codes have one.
+			cg.fill(&cr.codeTable, uint32(r)<<cg.shift)
+		}
 		log.Drain(p, func(chunk []byte) { cg.merge(&cr.codeTable, r, chunk) })
 		cg.handOn(a.w.x, r)
 	})
@@ -619,6 +631,10 @@ func (c *codedWorker) counts(cg *codedGroups) {
 // the table of the range.
 func (cg *codedGroups) count(t *codeTable, r int, codes []uint32) {
 	base := uint32(r) << cg.shift
+	if !t.dense && t.n == 0 && len(codes) >= 1<<cg.shift {
+		// As many rows as the range has codes: most codes have one.
+		cg.fill(t, base)
+	}
 	for len(codes) != 0 && !t.dense {
 		if g, fresh := t.group(uint64(codes[0])); fresh {
 			t.words = append(wordPool.Grow(t.words, 1), 1)
@@ -854,6 +870,12 @@ func newCodedBits(dict *part.Dictionary, d, workers int) *codedBits {
 	ranges := min(max(width-bitRangeBits, bits.Len(uint(4*workers-1))), maxRangeBits, max(width-6, 0))
 	cb := &codedBits{dict: dict, d: d, shift: uint(width - ranges), ranges: make([]bitRange, 1<<ranges)}
 	used := dict.Len()>>cb.shift + 1
+	// A few groups in every range hold their bits without an allocation
+	// of the range's own.
+	room := make([][]uint64, used*bitGroups)
+	for r := 0; r < used; r++ {
+		cb.ranges[r].maps = room[r*bitGroups : r*bitGroups : (r+1)*bitGroups]
+	}
 	cb.room = max(min(stageBudget/workers/logShare/8/used, markRows, roomFor(dict, workers, used)), tallyRows)
 
 	return cb
@@ -966,7 +988,7 @@ func (x *execution) hand(cg *codedGroups, marked []*codedBits) {
 			continue
 		}
 		for r := range cb.ranges {
-			if maps := cb.ranges[r].maps; maps != nil {
+			if maps := cb.ranges[r].maps; len(maps) != 0 {
 				x.push(handover{bits: cb, maps: maps, r: r, bytes: bitBytes(maps)})
 				cb.ranges[r].maps = nil
 			}
