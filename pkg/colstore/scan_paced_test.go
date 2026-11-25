@@ -1,6 +1,7 @@
 package colstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -202,6 +204,87 @@ func TestScanByTimeOpensTheSameBlocksHoweverItsGoroutinesFall(t *testing.T) {
 			// only blocks that one goroutine opens as well.
 			if most := 2*least.Blocks + workers; first.Blocks > most {
 				t.Fatalf("%d blocks opened, one goroutine opens %d, want at most %d", first.Blocks, least.Blocks, most)
+			}
+		})
+	}
+}
+
+// TestScanByTimeOpensTheSameBlocksWhereNoneLiesBeyondTheFirst requires the
+// same of a scan whose blocks all begin, or all end, at about one time and
+// reach differently far, as the blocks of a table kept in the order of a
+// key do within a day: no block lies wholly beyond the one that the scan
+// takes first, and yet the rows kept rule most of them out.
+func TestScanByTimeOpensTheSameBlocksWhereNoneLiesBeyondTheFirst(t *testing.T) {
+	const blocks, blockRows, top, workers, want = 48, 80, 4000, 8, 60
+	for _, c := range []struct {
+		name   string
+		byTime int
+	}{{"the latest", -1}, {"the earliest", 1}} {
+		t.Run(c.name, func(t *testing.T) {
+			// Block j holds every (j+1)th time from zero up, or from top
+			// down for the earliest.
+			var buf bytes.Buffer
+			w := part.NewWriter(&buf, part.Options{})
+			batch := shred.NewBatch(shred.Options{})
+			var wanted []int64
+			keep := func(_ *part.Part, n int64) bool { return n%13 == 0 }
+			for j := 0; j < blocks; j++ {
+				batch.Reset()
+				for i := 0; i < blockRows; i++ {
+					n := int64(i * (j + 1))
+					if c.byTime > 0 {
+						n = top - n
+					}
+					if err := batch.AddJSON(fmt.Appendf(nil, `{"n":%d}`, n), n); err != nil {
+						t.Fatal(err)
+					}
+					if keep(nil, n) {
+						wanted = append(wanted, n)
+					}
+				}
+				if err := w.WriteBatch(batch); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			p, err := part.Open(buf.Bytes())
+			if err != nil {
+				t.Fatal(err)
+			}
+			tbl := NewTable()
+			defer tbl.Close()
+			if err := tbl.Apply([]*Handle{NewHandle(p, nil)}, nil); err != nil {
+				t.Fatal(err)
+			}
+			snap := tbl.Snapshot()
+			defer snap.Release()
+			slices.Sort(wanted)
+			if c.byTime < 0 {
+				slices.Reverse(wanted)
+			}
+			wanted = wanted[:want]
+			got, least := scanFirst(t, snap, ScanOptions{ByTime: c.byTime, Workers: 1}, want, keep, 0)
+			if !slices.Equal(got, wanted) {
+				t.Fatalf("one goroutine keeps %v, want %v", got, wanted)
+			}
+			var first ScanStats
+			for seed := uint64(0); seed < 24; seed++ {
+				got, stats := scanFirst(t, snap, ScanOptions{ByTime: c.byTime, Workers: workers}, want, keep, seed)
+				if !slices.Equal(got, wanted) {
+					t.Fatalf("seed %d: kept %v, want %v", seed, got, wanted)
+				}
+				if seed == 0 {
+					first = stats
+					t.Logf("%d of %d blocks opened, %d by one goroutine", stats.Blocks, blocks, least.Blocks)
+				}
+				if stats != first {
+					t.Fatalf("seed %d: %+v, without waits %+v", seed, stats, first)
+				}
+			}
+			if most := 2*least.Blocks + workers; first.Blocks > most || first.Blocks == blocks {
+				t.Fatalf("%d of %d blocks opened, one goroutine opens %d, want at most %d", first.Blocks, blocks, least.Blocks, most)
 			}
 		})
 	}
