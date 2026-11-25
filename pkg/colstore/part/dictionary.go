@@ -2,9 +2,11 @@ package part
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"hash/crc32"
 	"math/bits"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -188,6 +190,70 @@ func (d *Dictionary) ahead() {
 		return
 	}
 	d.readAhead(int(d.off), int(d.size))
+}
+
+// Ahead asks for the sections of the dictionary ahead of reads of the
+// strings of n of its codes, when those, each on a page of its own at
+// worst, may lie on more than one page in sharedAhead of the dictionary's.
+func (d *Dictionary) Ahead(n int) {
+	if uint64(n)*dictPage*sharedAhead >= d.dataLen {
+		d.ahead()
+	}
+}
+
+// aheadOf asks for the pages that reading the strings of codes takes, a few
+// codes whose strings lie far apart, so that the pages come together and
+// not one after another as they are read. It leaves out the pages that were
+// read since the last Recheck, which it takes to be in memory, and uses
+// spans as its scratch.
+func (d *Dictionary) aheadOf(codes []uint32, spans [][2]uint32) [][2]uint32 {
+	if d.readAhead == nil || d.asked.Load() {
+		return spans
+	}
+	spans = spans[:0]
+	add := func(off, n uint64) {
+		for pg := off / dictPage; pg <= (off+n-1)/dictPage && pg < uint64(len(d.sound))*64; pg++ {
+			if d.sound[pg>>6].Load()>>(pg&63)&1 == 0 {
+				spans = append(spans, [2]uint32{uint32(pg), uint32(pg) + 1})
+			}
+		}
+	}
+	ask := func() {
+		slices.SortFunc(spans, func(x, y [2]uint32) int { return cmp.Compare(x[0], y[0]) })
+		for i := 0; i < len(spans); {
+			from, to := spans[i][0], spans[i][1]
+			for i++; i < len(spans) && spans[i][0] <= to+aheadGap/dictPage; i++ {
+				to = max(to, spans[i][1])
+			}
+			end := min(uint64(to)*dictPage, d.size)
+			d.readAhead(int(d.off+uint64(from)*dictPage), int(end-uint64(from)*dictPage))
+		}
+		spans = spans[:0]
+	}
+	if d.liveLen != 0 {
+		// The bits that tell which codes have a string are read first, to
+		// number the strings.
+		live := d.slotsLen + d.exceptLen
+		for _, code := range codes {
+			if int(code) >= d.codes {
+				continue
+			}
+			block := uint64(code) / liveBlock
+			add(live+8*block*(liveBlock/64), 8*(uint64(code)>>6-block*(liveBlock/64)+1))
+			add(live+8*uint64((d.codes+63)/64)+4*block, 4)
+		}
+		ask()
+	}
+	span := uint64(d.reader.slot+7)/8 + 8
+	for _, code := range codes {
+		if i, err := d.index(code); err == nil {
+			at := uint64(i) * uint64(d.reader.slot) >> 3
+			add(at, min(span, d.slotsLen-at))
+		}
+	}
+	ask()
+
+	return spans
 }
 
 // checked reports whether the n bytes at off of the sections match the

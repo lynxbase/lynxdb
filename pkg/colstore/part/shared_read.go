@@ -60,9 +60,7 @@ func (b *Block) decodeShared(ref *ColumnRef, chunk []byte, sparse bool, rows int
 	if !ok {
 		return ErrCorrupt
 	}
-	if uint64(ref.Count)*dictPage*sharedAhead >= d.dataLen {
-		d.ahead()
-	}
+	d.Ahead(ref.Count)
 
 	return d.fill(dst, codes, sparse, rows)
 }
@@ -162,6 +160,20 @@ func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error
 	picked := append(b.pos[:0], rows...)
 	slices.Sort(picked)
 	b.pos = picked
+	// The strings of the rows lie on pages all over the dictionary, which
+	// are asked for together before the first is read.
+	b.picks = b.picks[:0]
+	for _, row := range picked {
+		r := int(row)
+		if r >= b.Rows || !dst.IsValid(r) {
+			continue
+		}
+		if dst.Valid != nil {
+			r = dst.Valid.Rank(r)
+		}
+		b.picks = append(b.picks, codes[r])
+	}
+	b.spans = d.aheadOf(b.picks, b.spans)
 	data := dst.Data[:0]
 	dst.Offsets = grow(dst.Offsets, b.Rows+1)
 	offsets := dst.Offsets

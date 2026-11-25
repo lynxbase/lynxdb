@@ -621,8 +621,10 @@ type Block struct {
 	slot uint32
 	// present holds the rows of a sparse column searched as it is stored.
 	present vec.Column
-	// spans is the scratch of Ahead.
+	// spans is the scratch of Ahead, and picks holds the codes of the rows
+	// that DecodeRows reads of a shared column.
 	spans [][2]uint32
+	picks []uint32
 	// times holds the time of every row once timesRead is set, and anchors
 	// the numbers of the columns that timed columns follow, as they are
 	// read, which space holds, the block's own unless blocks that decode
