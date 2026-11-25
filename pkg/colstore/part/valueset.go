@@ -132,7 +132,7 @@ func (v *valueSet) number(val []byte) (uint32, bool) {
 		}
 		slot = (slot + 1) & mask
 	}
-	if len(v.data)+len(val) > math.MaxUint32 {
+	if uint64(len(v.data))+uint64(len(val)) > math.MaxUint32 {
 		return 0, false
 	}
 	v.data = append(v.data, val...)
