@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -254,6 +255,67 @@ func (d *Dictionary) aheadOf(codes []uint32, spans [][2]uint32) [][2]uint32 {
 	ask()
 
 	return spans
+}
+
+// MayHold reports whether a string of the dictionary may hold the pattern.
+// False tells that none does, which it learns without reading them: from
+// the layout of the strings of the one length, the bytes that each of
+// their positions takes, and from the few strings kept as they are. True
+// tells nothing.
+func (d *Dictionary) MayHold(p *tokenfilter.Pattern) (bool, error) {
+	r := &d.reader
+	if d.stored > d.exceptions {
+		var sets [maxDictStride]tokenfilter.ByteSet
+		for i, c := range r.template {
+			sets[i].Add(c)
+		}
+		for _, step := range r.schedule {
+			for j := 0; j < step.count; j++ {
+				set := &sets[step.at+j]
+				*set = tokenfilter.ByteSet{}
+				for _, c := range r.table[(step.first+j)<<maxPackedBits:][:1<<step.width] {
+					set.Add(c)
+				}
+			}
+		}
+		if p.Within(sets[:r.stride]) {
+			return true, nil
+		}
+	}
+	held := false
+	err := d.others(func(value []byte) bool {
+		held = p.Match(value)
+
+		return !held
+	})
+
+	return held, err
+}
+
+// others calls fn with every string that the dictionary keeps as it is,
+// until fn returns false.
+func (d *Dictionary) others(fn func(value []byte) bool) error {
+	count := uint64(d.exceptions)
+	if count == 0 {
+		return nil
+	}
+	base := d.slotsLen
+	ends := base + 4*count
+	text := ends + 4*(count+1)
+	if text > base+d.exceptLen || !d.checked(base, d.exceptLen) {
+		return ErrCorrupt
+	}
+	for k := uint64(0); k < count; k++ {
+		from, to := uint64(binary.LittleEndian.Uint32(d.data[ends+4*k:])), uint64(binary.LittleEndian.Uint32(d.data[ends+4*k+4:]))
+		if from > to || to > base+d.exceptLen-text {
+			return ErrCorrupt
+		}
+		if !fn(d.data[text+from : text+to]) {
+			return nil
+		}
+	}
+
+	return nil
 }
 
 // checked reports whether the n bytes at off of the sections match the
