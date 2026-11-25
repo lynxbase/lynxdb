@@ -423,7 +423,7 @@ func newCodedGroups(d *part.Dictionary, plan *aggPlan, key, workers int) *codedG
 	if cg.single && plan.rowsOnly {
 		// A row to count waits as its code, in the room of its range.
 		used := d.Len()>>cg.shift + 1
-		cg.room = max(min(share/4/used, logRepeats<<cg.shift), tallyRows)
+		cg.room = max(min(share/4/used, logRepeats<<cg.shift, roomFor(d, workers, used)), tallyRows)
 
 		return cg
 	}
@@ -432,6 +432,14 @@ func newCodedGroups(d *part.Dictionary, plan *aggPlan, key, workers int) *codedG
 	cg.held = min(share/(16+8*len(plan.words)), logRepeats*d.Len()+tallyRows)
 
 	return cg
+}
+
+// roomFor returns the values of the column of d that a worker holds for
+// one of used ranges of its codes when it holds all that it reads of the
+// part: its part of the values of the part, half again as many for the
+// ranges that get more than the others.
+func roomFor(d *part.Dictionary, workers, used int) int {
+	return int(min(d.Values()/uint64(workers)/uint64(used)*3/2, 1<<30)) + tallyRows
 }
 
 // group returns the number of the group of key, and whether the table did
@@ -846,7 +854,7 @@ func newCodedBits(dict *part.Dictionary, d, workers int) *codedBits {
 	ranges := min(max(width-bitRangeBits, bits.Len(uint(4*workers-1))), maxRangeBits, max(width-6, 0))
 	cb := &codedBits{dict: dict, d: d, shift: uint(width - ranges), ranges: make([]bitRange, 1<<ranges)}
 	used := dict.Len()>>cb.shift + 1
-	cb.room = max(min(stageBudget/workers/logShare/8/used, markRows), tallyRows)
+	cb.room = max(min(stageBudget/workers/logShare/8/used, markRows, roomFor(dict, workers, used)), tallyRows)
 
 	return cb
 }
