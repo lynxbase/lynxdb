@@ -65,6 +65,10 @@ type StorageConfig struct {
 	// SortKey names the fields that order the rows of each part written
 	// after it is set; empty keeps the order of time.
 	SortKey []string `yaml:"sort_key" json:"sort_key"`
+	// PartDictionary gives the parts of an index created after it is set a
+	// dictionary of their own for the string columns whose values repeat
+	// across their blocks.
+	PartDictionary bool `yaml:"part_dictionary" json:"part_dictionary"`
 }
 
 // QueryConfig holds query execution parameters.

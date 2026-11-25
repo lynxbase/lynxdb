@@ -37,9 +37,9 @@ type Config struct {
 	Dir string
 	// Retention is how long events are kept; zero keeps them all.
 	Retention time.Duration
-	// Partition, TimeFields and SortKey are the settings that an index
-	// created by ingest, or with a request that leaves them out, takes; an
-	// index keeps its settings from then on.
+	// Partition, TimeFields, SortKey and PartDictionary are the settings
+	// that an index created by ingest, or with a request that leaves them
+	// out, takes; an index keeps its settings from then on.
 	//
 	// Partition is the span of time whose events are kept apart; zero
 	// means DefaultPartition.
@@ -53,6 +53,9 @@ type Config struct {
 	// SortKey names the fields that order the rows of an index; empty
 	// keeps the order of time.
 	SortKey []string
+	// PartDictionary gives the parts of an index a dictionary of their own
+	// for the string columns whose values repeat across their blocks.
+	PartDictionary bool
 	// MaxConcurrent bounds the queries that run at once; zero means no
 	// bound.
 	MaxConcurrent int
@@ -104,6 +107,7 @@ func Open(cfg Config) (*DB, error) {
 		FlushInterval: cfg.FlushInterval,
 		// Merges rewrite flushed runs soon, at the level of merged parts.
 		FlushLevel: part.LevelFastest,
+		Part:       part.Options{Dictionary: cfg.PartDictionary},
 	}})
 	if err != nil {
 		return nil, err
@@ -162,7 +166,7 @@ func (db *DB) Stats() []columnar.IndexStats { return db.core.Stats() }
 func (db *DB) Index(name string) (columnar.IndexStats, bool) { return db.core.Index(name) }
 
 // CreateIndex is columnar.DB.Create: the settings that want leaves unset
-// are the database's Partition, TimeFields and SortKey.
+// are the database's Partition, TimeFields, SortKey and PartDictionary.
 func (db *DB) CreateIndex(index string, want columnar.Settings) (columnar.Settings, bool, error) {
 	return db.core.Create(index, want)
 }

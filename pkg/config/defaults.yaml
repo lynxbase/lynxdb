@@ -19,6 +19,7 @@
 #   flush_interval: 0s               # Longest wait before ingested events are written (0 = store default)
 #   time_fields: [_time, timestamp, "@timestamp", time, ts]  # Fields that set the event time, in order
 #   sort_key: []                     # Fields that order the rows of parts written from then on (empty = time order)
+#   part_dictionary: false           # Keep one dictionary per part for string columns that repeat across blocks, in new indexes
 
 # Query execution configuration.
 # query:

@@ -189,6 +189,17 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strings.Join(c.Storage.SortKey, ",") }},
+	{LYNXDB_STORAGE_PART_DICTIONARY, "storage.part_dictionary",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Storage.PartDictionary = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Storage.PartDictionary) }},
 
 	// Query
 	{LYNXDB_QUERY_SYNC_TIMEOUT, "query.sync_timeout",

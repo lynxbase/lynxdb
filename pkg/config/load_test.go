@@ -53,6 +53,7 @@ storage:
   flush_interval: 250ms
   time_fields: [ts]
   sort_key: [kind, commit.collection]
+  part_dictionary: true
 query:
   max_concurrent: 20
 `), 0o644)
@@ -82,6 +83,9 @@ query:
 	if got := strings.Join(cfg.Storage.SortKey, ","); got != "kind,commit.collection" {
 		t.Errorf("SortKey: got %q", got)
 	}
+	if !cfg.Storage.PartDictionary {
+		t.Error("PartDictionary: got false")
+	}
 	if cfg.Query.MaxConcurrent != 20 {
 		t.Errorf("MaxConcurrent: got %d", cfg.Query.MaxConcurrent)
 	}
@@ -107,6 +111,7 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_STORAGE_FLUSH_INTERVAL", "2s")
 	t.Setenv("LYNXDB_STORAGE_TIME_FIELDS", "ts, @timestamp")
 	t.Setenv("LYNXDB_STORAGE_SORT_KEY", "kind, did")
+	t.Setenv("LYNXDB_STORAGE_PART_DICTIONARY", "true")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "9.0.1")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
 	t.Setenv("LYNXDB_INGEST_OTLP_HTTP_LISTEN", "127.0.0.1:18318")
@@ -140,6 +145,9 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if got := strings.Join(cfg.Storage.SortKey, ","); got != "kind,did" {
 		t.Errorf("SortKey: got %q", got)
+	}
+	if !cfg.Storage.PartDictionary {
+		t.Error("PartDictionary: got false")
 	}
 	if cfg.Ingest.ESCompat.AdvertisedVersion != "9.0.1" {
 		t.Errorf("AdvertisedVersion: got %q", cfg.Ingest.ESCompat.AdvertisedVersion)

@@ -95,6 +95,9 @@ const (
 	// LYNXDB_STORAGE_SORT_KEY is the comma-separated list of fields that order the rows of each part.
 	// YAML key: storage.sort_key. Default: empty (time order).
 	LYNXDB_STORAGE_SORT_KEY = "LYNXDB_STORAGE_SORT_KEY"
+	// LYNXDB_STORAGE_PART_DICTIONARY gives the parts of new indexes a dictionary for string columns that repeat across blocks.
+	// YAML key: storage.part_dictionary. Default: false.
+	LYNXDB_STORAGE_PART_DICTIONARY = "LYNXDB_STORAGE_PART_DICTIONARY"
 	// LYNXDB_SYSLOG_BATCH_SIZE is the flush after this many events.
 	// YAML key: syslog.batch_size. Default: 1000.
 	LYNXDB_SYSLOG_BATCH_SIZE = "LYNXDB_SYSLOG_BATCH_SIZE"

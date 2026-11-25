@@ -79,15 +79,16 @@ func NewServer(cfg Config) (*Server, error) {
 		cfg.Logger = slog.Default()
 	}
 	db, err := database.Open(database.Config{
-		Dir:           indexDir(cfg.DataDir),
-		Retention:     cfg.Retention,
-		Partition:     cfg.Storage.Partition.Duration(),
-		FlushInterval: cfg.Storage.FlushInterval.Duration(),
-		TimeFields:    cfg.Storage.TimeFields,
-		SortKey:       cfg.Storage.SortKey,
-		MaxConcurrent: cfg.Query.MaxConcurrent,
-		JobTTL:        cfg.Query.JobTTL,
-		Logger:        cfg.Logger,
+		Dir:            indexDir(cfg.DataDir),
+		Retention:      cfg.Retention,
+		Partition:      cfg.Storage.Partition.Duration(),
+		FlushInterval:  cfg.Storage.FlushInterval.Duration(),
+		TimeFields:     cfg.Storage.TimeFields,
+		SortKey:        cfg.Storage.SortKey,
+		PartDictionary: cfg.Storage.PartDictionary,
+		MaxConcurrent:  cfg.Query.MaxConcurrent,
+		JobTTL:         cfg.Query.JobTTL,
+		Logger:         cfg.Logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

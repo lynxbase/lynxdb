@@ -26,6 +26,9 @@ func TestDefaultConfig(t *testing.T) {
 	if want := []string{"_time", "timestamp", "@timestamp", "time", "ts"}; !slices.Equal(cfg.Storage.TimeFields, want) {
 		t.Errorf("expected time fields %v, got %v", want, cfg.Storage.TimeFields)
 	}
+	if cfg.Storage.PartDictionary {
+		t.Error("expected no part dictionaries by default")
+	}
 	if cfg.Query.MaxConcurrent != defaultMaxConcurrent {
 		t.Errorf("expected %d, got %d", defaultMaxConcurrent, cfg.Query.MaxConcurrent)
 	}
