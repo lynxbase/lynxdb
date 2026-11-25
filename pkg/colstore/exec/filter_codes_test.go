@@ -3,6 +3,8 @@ package exec_test
 import (
 	"context"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -108,6 +110,65 @@ func TestCodesFilterAsStringsDo(t *testing.T) {
 					t.Fatalf("%s with %d workers and %d parts: %d columns filtered by code and %d ruled out by their dictionary",
 						c.name, workers, len(parts), s.ColumnsFilteredByCode, s.ColumnsRuledOutByDictionary)
 				}
+			}
+		}
+	}
+}
+
+// TestWholeRowsOfCodesAskAhead fetches whole rows from parts that store
+// columns as codes of part dictionaries and announce what they are about to
+// read: the rows are those of the same parts stored block by block, and the
+// pages of the dictionaries are asked for.
+func TestWholeRowsOfCodesAskAhead(t *testing.T) {
+	docs := accountDocs(60000)
+	parts := []codedPart{{shared: true}, {shared: true, first: 900}, {}}
+	plain := codedTable(t, docs, 4096, make([]codedPart, len(parts)))
+	coded := codedTable(t, docs, 4096, parts)
+	was, is := plain.Snapshot(), coded.Snapshot()
+	defer was.Release()
+	defer is.Release()
+	var asked atomic.Int64
+	for _, h := range is.Parts() {
+		h.SetReadAhead(func(_, n int) { asked.Add(int64(n)) })
+	}
+	whole := func(filter *exec.Expr) exec.Node {
+		return &exec.Project{Input: &exec.Scan{Filter: filter}, Exprs: []exec.Named{named("t", exec.Time())}, Rest: true}
+	}
+	latest := []exec.Order{{Column: "t", Desc: true}}
+	for name, plan := range map[string]exec.Node{
+		"the latest rows":          &exec.Sort{Input: whole(nil), By: latest, Limit: 100},
+		"the first rows":           &exec.Sort{Input: whole(nil), By: []exec.Order{{Column: "t"}}, Limit: 40},
+		"the rows of an account":   &exec.Sort{Input: whole(exec.Eq(str("acct"), exec.Str(accountID(3)))), By: latest, Limit: 100},
+		"the rows of a peer":       whole(exec.Eq(str("peer"), exec.Str(accountID(700)))),
+		"rows with a small number": &exec.Sort{Input: whole(exec.Lt(num("n"), exec.Int(2))), By: []exec.Order{{Column: "t"}}, Limit: 300},
+		"any rows, on a goroutine": &exec.Sort{Input: whole(nil), Limit: 50},
+		"the latest of two columns": &exec.Sort{Input: &exec.Project{Input: &exec.Scan{}, Exprs: []exec.Named{
+			named("acct", str("acct")), named("peer", anyOf("peer")), named("t", exec.Time())}}, By: []exec.Order{{Column: "t", Desc: true}}, Limit: 80},
+	} {
+		for _, workers := range []int{1, 4} {
+			if workers > 1 && strings.HasPrefix(name, "any rows") {
+				continue
+			}
+			answer := func(snap *colstore.Snapshot) []string {
+				res, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: workers})
+				if err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+				rows := namedRows(res)
+				slices.Sort(rows)
+
+				return rows
+			}
+			for _, h := range is.Parts() {
+				h.ForgetReadAhead()
+			}
+			asked.Store(0)
+			want, got := answer(was), answer(is)
+			if len(want) == 0 || !slices.Equal(got, want) {
+				t.Fatalf("%s with %d workers: %d rows, want %d; first %v, want %v", name, workers, len(got), len(want), first(got), first(want))
+			}
+			if asked.Load() == 0 {
+				t.Fatalf("%s with %d workers: nothing was asked for ahead", name, workers)
 			}
 		}
 	}

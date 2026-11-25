@@ -142,6 +142,29 @@ func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, block int
 	return nil
 }
 
+// ahead asks for the pages of part dictionaries that reading the fields of
+// the rows of picks, all of which are in one block, takes: those of every
+// column that the block stores as codes, before any of them is read, so
+// that they come together and not column after column.
+func (r *resolver) ahead(parts []*colstore.Handle, picks []placed) {
+	loc := picks[0].loc >> 16
+	p := parts[loc>>28].Part
+	if !p.Shares() || p.OpenBlock(int(loc&(1<<28-1)), &r.b) != nil {
+		return
+	}
+	r.rows = r.rows[:0]
+	for _, pk := range picks {
+		r.rows = append(r.rows, uint32(pk.loc&0xFFFF))
+	}
+	refs := r.b.Columns()
+	for i := range refs {
+		// A column that cannot be asked for fails when it is read.
+		if refs[i].Shared() && r.b.AheadRows(&refs[i], r.rows) != nil {
+			return
+		}
+	}
+}
+
 // keptCells bounds the cells that a resolver keeps for the next query.
 const keptCells = 1 << 18
 
@@ -190,6 +213,11 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 			}
 		}
 	}()
+	// What the rows take of part dictionaries is asked for in every block
+	// before a block is read.
+	if err := forEach(blocks, len(rs), func(slot, i int) { rs[slot].ahead(parts, picks[starts[i]:starts[i+1]]) }); err != nil {
+		return nil, nil, err
+	}
 	var failed atomic.Pointer[error]
 	err := forEach(blocks, len(rs), func(slot, i int) {
 		if err := rs[slot].fields(parts, names, int32(i), picks[starts[i]:starts[i+1]]); err != nil {
