@@ -18,7 +18,8 @@ import (
 // after run, few more than one goroutine opens: that takes the blocks one
 // after another and opens none that the rows before it rule out. The store
 // is in the order of a sort key, a day to a partition, or in the order of
-// time.
+// time. Each plan keeps more rows than a block holds of the word: a scan
+// whose first block fills the result goes on as its goroutines fall.
 func TestFirstRowsOfAWordOpenTheSameBlocks(t *testing.T) {
 	const rows, days, blockRows, oneIn, workers = 300_000, 4, 512, 120, 8
 	const posts = `kind = 'commit' and commit.operation = 'create' and commit.collection = 'app.bsky.feed.post'`
@@ -38,7 +39,7 @@ func TestFirstRowsOfAWordOpenTheSameBlocks(t *testing.T) {
 			{"the earliest", `source=bluesky | where ` + word + ` | sort _time`, 20},
 			{"the latest hundred", `source=bluesky | where ` + word + ` | sort - _time`, 100},
 			{"the accounts that wrote it first", `source=bluesky | where ` + posts + ` and ` + word +
-				` | stats min(_time) as first by did | sort first, did`, 3},
+				` | stats min(_time) as first by did | sort first, did`, 30},
 		} {
 			t.Run(store.name+"/"+c.name, func(t *testing.T) {
 				run := func(text string, opts exec.Options) *exec.Result {
