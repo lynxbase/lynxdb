@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -85,11 +84,7 @@ func BenchmarkCodedColumns(b *testing.B) {
 	if os.Getenv("LYNXDB_BENCH_HASHED_WORKERS") != "" {
 		workers = envOr(b, "LYNXDB_BENCH_HASHED_WORKERS", 0)
 	}
-	dir := filepath.Join(b.TempDir(), "store")
-	if kept := os.Getenv("LYNXDB_BENCH_HASHED_DIR"); kept != "" {
-		dir = filepath.Join(kept, fmt.Sprintf("hashed-%d-%d-%d", rows, users, days))
-	}
-	s, truth := hashedStore(b, dir, rows, users, days)
+	s, truth := hashedStore(b, hashedDir(b, rows, users, days), rows, users, days)
 	defer s.Close()
 	snap := s.Table().Snapshot()
 	defer snap.Release()

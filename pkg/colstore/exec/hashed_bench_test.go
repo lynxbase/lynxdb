@@ -199,13 +199,38 @@ func hashedAnswer(b *testing.B, name string, res *exec.Result, t *hashedTruth) s
 	return strings.Join(out, " ")
 }
 
+// benchDictionary reports whether LYNXDB_BENCH_DICTIONARY asks for stores
+// whose parts hold dictionaries, as those of an index created with
+// part_dictionary do.
+func benchDictionary() bool { return os.Getenv("LYNXDB_BENCH_DICTIONARY") != "" }
+
+// hashedDir returns the directory of the store of the benchmark: one that
+// LYNXDB_BENCH_HASHED_DIR keeps between runs, when set, and one of the
+// benchmark otherwise.
+func hashedDir(b *testing.B, rows, users, days int) string {
+	b.Helper()
+	kept := os.Getenv("LYNXDB_BENCH_HASHED_DIR")
+	if kept == "" {
+		return filepath.Join(b.TempDir(), "store")
+	}
+	name := fmt.Sprintf("hashed-%d-%d-%d", rows, users, days)
+	if benchDictionary() {
+		name += "-dictionary"
+	}
+
+	return filepath.Join(kept, name)
+}
+
 // hashedStore opens the store of the benchmark in dir, writing it first
 // unless it is there, and returns it with the answers of the queries: rows
 // events of users accounts over days days, in daily partitions and with no
 // sort key, as an index is laid out unless told otherwise.
 func hashedStore(b *testing.B, dir string, rows, users, days int) (*colstore.Store, *hashedTruth) {
 	b.Helper()
-	opts := colstore.StoreOptions{TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, FlushLevel: part.LevelFastest}
+	opts := colstore.StoreOptions{
+		TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, FlushLevel: part.LevelFastest,
+		Part: part.Options{Dictionary: benchDictionary()},
+	}
 	_, statErr := os.Stat(dir)
 	s, err := colstore.OpenStore(dir, opts)
 	if err != nil {
@@ -287,6 +312,7 @@ func peakHeap(fn func()) uint64 {
 // LYNXDB_BENCH_HASHED_ROWS sets the events (16Mi by default),
 // LYNXDB_BENCH_HASHED_USERS the accounts that write them (one per 8 events),
 // LYNXDB_BENCH_HASHED_DAYS the days they cover (4),
+// LYNXDB_BENCH_DICTIONARY, when set, gives the parts dictionaries,
 // LYNXDB_BENCH_HASHED_DIR a directory that keeps the store between runs and
 // LYNXDB_BENCH_HASHED_PROFILE one that receives a CPU profile of the timed
 // runs of every query. LYNXDB_BENCH_HASHED_STAGE sets the megabytes of
@@ -306,11 +332,7 @@ func BenchmarkHashed(b *testing.B) {
 	if os.Getenv("LYNXDB_BENCH_HASHED_STAGE") != "" {
 		defer exec.SetStageBudget(envOr(b, "LYNXDB_BENCH_HASHED_STAGE", 0) << 20)()
 	}
-	dir := filepath.Join(b.TempDir(), "store")
-	if kept := os.Getenv("LYNXDB_BENCH_HASHED_DIR"); kept != "" {
-		dir = filepath.Join(kept, fmt.Sprintf("hashed-%d-%d-%d", rows, users, days))
-	}
-	s, truth := hashedStore(b, dir, rows, users, days)
+	s, truth := hashedStore(b, hashedDir(b, rows, users, days), rows, users, days)
 	defer s.Close()
 	snap := s.Table().Snapshot()
 	defer snap.Release()

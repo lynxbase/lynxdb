@@ -32,6 +32,7 @@ func latestStore(b testing.TB, dir string, rows, days, blockRows, oneIn int, sor
 		BlockRows:  blockRows,
 		Partition:  24 * time.Hour,
 		FlushLevel: part.LevelFastest,
+		Part:       part.Options{Dictionary: benchDictionary()},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -119,8 +120,9 @@ func renderedSet(res *exec.Result) string {
 // by default), LYNXDB_BENCH_LATEST_DAYS the days they cover (8),
 // LYNXDB_BENCH_LATEST_BLOCK_ROWS the rows of a block (1024, so that the
 // store has some four thousand of them), LYNXDB_BENCH_LATEST_ONE_IN the
-// posts for each that holds the word (250, a few to a block of posts), and
-// LYNXDB_BENCH_LATEST_WORKERS the goroutines of the query (one per CPU).
+// posts for each that holds the word (250, a few to a block of posts),
+// LYNXDB_BENCH_LATEST_WORKERS the goroutines of the query (one per CPU), and
+// LYNXDB_BENCH_DICTIONARY, when set, gives the parts dictionaries.
 func BenchmarkLatestRows(b *testing.B) {
 	rows := envOr(b, "LYNXDB_BENCH_LATEST_ROWS", 1<<22)
 	days := envOr(b, "LYNXDB_BENCH_LATEST_DAYS", 8)

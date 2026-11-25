@@ -28,7 +28,8 @@ var repeatedColumns = []string{
 
 // BenchmarkRepeatedColumns loads generated events into a store in three
 // steps, each written as runs and then compacted, in the design of rows in
-// time order and in the one ordered by the key of the Bluesky benchmark: the
+// time order and in the one ordered by the key of the Bluesky benchmark,
+// each with parts that hold no dictionary and with parts that do: the
 // first compaction merges flushed runs, the second a compacted run with as
 // many rows of flushed runs, and the third a compacted run with one flushed
 // run of a sixteenth of the events, most of whose blocks it can copy. It
@@ -59,6 +60,13 @@ func BenchmarkRepeatedColumns(b *testing.B) {
 			SortKey:    []string{"kind", "commit.operation", "commit.collection", "did"},
 			TimeFields: []string{"time_us"}, Partition: 24 * time.Hour, FlushLevel: part.LevelFastest,
 		}},
+	}
+	// Each design without dictionaries, as a store is unless told
+	// otherwise, and with them.
+	for i, d := range designs {
+		designs[i].name = d.name + "/plain"
+		d.name, d.opts.Part.Dictionary = d.name+"/dictionary", true
+		designs = append(designs, d)
 	}
 	loaded, late := rows/(2*runs)*(2*runs), rows/16
 	for _, d := range designs {
