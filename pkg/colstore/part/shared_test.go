@@ -306,3 +306,60 @@ func didOf(doc string) string {
 
 // tokenHash returns the hash of a word that is one token.
 func tokenHash(word string) uint64 { return tokenfilter.AppendHashes(nil, []byte(word))[0] }
+
+// TestSharedColumnHasAFilterOfItsOwn writes a column of identifiers as
+// codes beside a small column of words: the tokens of the identifiers are
+// in a filter of the column's own, as they are in a part without a
+// dictionary, so that a word of the small column does not send a search to
+// the strings of the dictionary.
+func TestSharedColumnHasAFilterOfItsOwn(t *testing.T) {
+	r := rand.New(rand.NewSource(11))
+	docs := make([]string, 12000)
+	for i := range docs {
+		note := ""
+		if i%40 == 0 {
+			note = `,"note":"an earthquake"`
+		}
+		docs[i] = fmt.Sprintf(`{"seq":%d,"did":"%s"%s}`, i, account(r.Intn(5000)), note)
+	}
+	for name, p := range map[string]*Part{"without a dictionary": buildPart(t, docs, 2048, Options{}), "with one": plannedPart(t, docs, 2048, Options{})} {
+		did, _ := p.PathID("did")
+		note, _ := p.PathID("note")
+		if shared, own := sharedBlocks(t, p, "did"); (name == "with one") != (shared > 0 && own == 0) {
+			t.Fatalf("%s: %d blocks store codes and %d strings", name, shared, own)
+		}
+		word, held := []uint64{tokenHash("earthquake")}, []uint64{tokenHash(account(3)[8:])}
+		var b Block
+		var bits vec.Bitmap
+		spared := 0
+		for i := 0; i < p.NumBlocks(); i++ {
+			if err := p.OpenBlock(i, &b); err != nil {
+				t.Fatal(err)
+			}
+			if !b.OwnFilter(did, vec.KindString) || b.OwnFilter(note, vec.KindString) {
+				t.Fatalf("%s, block %d: the identifiers have a filter of their own: %v, and the words: %v",
+					name, i, b.OwnFilter(did, vec.KindString), b.OwnFilter(note, vec.KindString))
+			}
+			var err error
+			if bits, err = b.ColumnsMayContain(bits, word); err != nil {
+				t.Fatal(err)
+			}
+			for c, ref := range b.Columns() {
+				switch {
+				case ref.PathID == note && !bits.Get(c):
+					t.Fatalf("%s, block %d: the filters rule the word out of the column that holds it", name, i)
+				case ref.PathID == did && !bits.Get(c):
+					spared++
+				}
+			}
+			// A filter may answer yes for a token the column lacks, never
+			// no for one it has.
+			if may, err := b.MayContainTokensIn(did, vec.KindString, held); err != nil || (!may && strings.Contains(strings.Join(docs[i*2048:min((i+1)*2048, len(docs))], ""), account(3))) {
+				t.Fatalf("%s, block %d: the filter of the identifiers lacks one: %v", name, i, err)
+			}
+		}
+		if spared < p.NumBlocks()-1 {
+			t.Fatalf("%s: a word of another column spares the identifiers in %d of %d blocks", name, spared, p.NumBlocks())
+		}
+	}
+}

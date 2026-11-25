@@ -819,11 +819,18 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 		w.encodeFloats(&ent, c.Floats)
 	case vec.KindString, vec.KindVariant:
 		w.column.Reset()
+		size := 0
 		if sp := w.sharedPlan(c.Path); sp == nil || c.Kind != vec.KindString || !w.encodeShared(&ent, c, sp) {
 			w.encodeBytes(&ent, c)
+		} else {
+			// A false answer of the filter costs the strings of the
+			// column, which lie all over the dictionary of the part, not
+			// the codes that the block holds of them: the column gets a
+			// filter of its own where the strings in the block would.
+			size = c.Count * sp.layout.stride
 		}
 		if !w.opts.NoTokenFilter {
-			w.filterColumn(ent.pathID, c.Kind, len(w.block)-start)
+			w.filterColumn(ent.pathID, c.Kind, max(size, len(w.block)-start))
 		}
 	}
 	w.finish(&ent, start)
