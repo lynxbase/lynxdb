@@ -3,11 +3,13 @@ package exec_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
@@ -290,5 +292,58 @@ func TestCodesAggregateAsStringsDo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCodesOfAQueryThatStops ends aggregations by code at every stage of
+// their scans: each returns its rows or the reason it stopped, and the
+// queries that follow answer as if none had.
+func TestCodesOfAQueryThatStops(t *testing.T) {
+	docs := codedDocs(60000, 2500)
+	tbl := codedTable(t, docs, 2048, []codedPart{{shared: true}, {shared: true}, {shared: true}})
+	snap := tbl.Snapshot()
+	defer snap.Release()
+	defer exec.SetStageBudget(1 << 16)()
+	defer exec.SetRangeGroups(64)()
+	plans := []exec.Node{
+		&exec.Aggregate{Input: &exec.Scan{}, Keys: keys("acct"), Aggs: []exec.Agg{{Name: "rows", Func: exec.Count}}},
+		&exec.Aggregate{Input: &exec.Scan{}, Keys: keys("kind", "acct"), Aggs: []exec.Agg{{Name: "sum", Func: exec.Sum, Arg: num("n")}}},
+		&exec.Aggregate{Input: &exec.Scan{}, Keys: keys("kind"), Aggs: []exec.Agg{{Name: "distinct", Func: exec.CountDistinct, Arg: str("acct")}}},
+	}
+	var want [][]string
+	for _, plan := range plans {
+		res, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := namedRows(res)
+		slices.Sort(rows)
+		want = append(want, rows)
+	}
+	stopped := 0
+	for round := 0; round < 60; round++ {
+		i := round % len(plans)
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(time.Duration(round*40) * time.Microsecond)
+			cancel()
+		}()
+		res, err := exec.Run(ctx, snap, plans[i], exec.Options{Workers: 4})
+		cancel()
+		switch {
+		case errors.Is(err, context.Canceled):
+			stopped++
+		case err != nil:
+			t.Fatalf("round %d: %v", round, err)
+		default:
+			rows := namedRows(res)
+			slices.Sort(rows)
+			if !slices.Equal(rows, want[i]) {
+				t.Fatalf("round %d: %d rows, want %d", round, len(rows), len(want[i]))
+			}
+		}
+	}
+	if stopped == 0 {
+		t.Fatal("no query was stopped")
 	}
 }
