@@ -52,7 +52,7 @@ type ScanOptions struct {
 	// rows it will keep, and only further into the order. Where some block
 	// could be ruled out the scan opens blocks in rounds and reads Bound
 	// between them, so that the blocks it opens are the same however its
-	// goroutines fall.
+	// goroutines fall. Without a Bound the order is not kept.
 	ByTime int
 	Bound  *atomic.Int64
 	// Ramp makes the scan take one block first and twice as many each time,
@@ -287,8 +287,9 @@ type scanUnit struct {
 
 // scanLists holds the lists a scan makes of its blocks, kept between scans.
 type scanLists struct {
-	units   []scanUnit
-	ordered []scanUnit
+	units []scanUnit
+	// queue orders the units of a scan by time.
+	queue   unitQueue
 	ids     []uint32
 	empties []*part.Misses
 	// runs holds the runs of blocks of one part that the key leaves.
@@ -386,10 +387,6 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		}
 	}
 	lists.units, lists.ids, lists.empties = units, ids, empties
-	if opts.ByTime != 0 {
-		lists.ordered = orderUnits(units, lists.ordered, opts.ByTime < 0)
-		units = lists.ordered
-	}
 
 	workers := opts.Workers
 	if workers <= 0 {
@@ -405,8 +402,8 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	}
 	one := func(worker int, b *part.Block, i int) bool { return r.one(worker, b, i, &units[i]) }
 	switch n := len(units); {
-	case r.paces():
-		r.paced(lists)
+	case opts.ByTime != 0 && opts.Bound != nil:
+		r.byTime(lists)
 	case opts.Ramp && n > rampFrom:
 		at := 0
 		for wave := 1; wave < workers && at < n && ctx.Err() == nil; wave = r.grow(wave, at) {
@@ -420,7 +417,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	}
 	stats.Blocks, stats.SkippedByToken = r.read.Load(), stats.SkippedByToken+r.skipped.Load()
 	late := r.late.Load()
-	if opts.Bound != nil {
+	if opts.ByTime != 0 && opts.Bound != nil {
 		// The bound ruled out the units that were neither opened nor left
 		// out for their tokens.
 		late = int64(len(units)) - r.read.Load() - r.skipped.Load()
@@ -514,15 +511,21 @@ func (r *scanRun) open(worker int, b *part.Block, u *scanUnit) bool {
 	return true
 }
 
-// one scans u, number i of each, and reports whether the scan goes on. A
-// unit that the bound rules out as its turn comes ends each instead: the
-// bound rules out those after it as well.
+// one scans u, number i of each, and reports whether the scan goes on. In
+// a scan by time a unit that the bound rules out as its turn comes ends
+// each instead: the bound rules out those after it as well.
 func (r *scanRun) one(worker int, b *part.Block, i int, u *scanUnit) bool {
 	if r.opts.Bound != nil && r.ruledOut(u, r.opts.Bound.Load()) {
 		r.halt(i)
 
 		return true
 	}
+
+	return r.unbound(worker, b, u)
+}
+
+// unbound scans u whatever the bound and reports whether the scan goes on.
+func (r *scanRun) unbound(worker int, b *part.Block, u *scanUnit) bool {
 	if !r.admit(u) {
 		return r.ctx.Err() == nil
 	}
@@ -595,27 +598,60 @@ func (r *scanRun) grow(wave, done int) int {
 	return wave
 }
 
-// paces reports whether the scan goes by rounds: it is by time with a bound
-// and several goroutines, has more units than are taken at once, and a
-// bound could rule one out. No row is kept beyond the range of the scan or
-// the first unit, so no bound rules out the last unit when that reaches as
-// far as they do.
-func (r *scanRun) paces() bool {
-	n := len(r.units)
-	if r.opts.Bound == nil || r.opts.ByTime == 0 || r.workers == 1 || n <= rampFrom {
-		return false
+// byTime scans the units in the order of time, as far as the bound leaves
+// them.
+func (r *scanRun) byTime(lists *scanLists) {
+	n, latest := len(r.units), r.opts.ByTime < 0
+	if n == 0 {
+		return
 	}
-	first, last := &r.units[0], &r.units[n-1]
-	if r.opts.ByTime < 0 {
-		return last.last < min(first.last, r.maxT)
+	// near and far are the times that order the first unit and the last.
+	near, far := r.units[0].first, r.units[0].first
+	if latest {
+		near, far = r.units[0].last, r.units[0].last
 	}
+	for i := range r.units {
+		if u := &r.units[i]; latest {
+			near, far = max(near, u.last), min(far, u.last)
+		} else {
+			near, far = min(near, u.first), max(far, u.first)
+		}
+	}
+	// No row is kept beyond the range of the scan or the first unit, so no
+	// bound rules out the last unit when that reaches as far as they do:
+	// every unit is then scanned, whatever their order.
+	if (latest && far >= min(near, r.maxT)) || (!latest && far <= max(near, r.minT)) {
+		r.each(r.workers, 0, n, func(worker int, b *part.Block, i int) bool { return r.unbound(worker, b, &r.units[i]) })
 
-	return last.first > max(first.first, r.minT)
+		return
+	}
+	q := &lists.queue
+	q.reset(r.units, latest)
+	// units holds the units in order, as far as q has given them.
+	units := q.out[:n]
+	switch {
+	case r.workers == 1:
+		// One goroutine opens no block that the rows before it rule out.
+		r.each(1, 0, n, func(worker int, b *part.Block, i int) bool {
+			q.fill(i + 1)
+
+			return r.one(worker, b, i, &units[i])
+		})
+	case n <= rampFrom:
+		q.fill(n)
+		r.each(r.workers, 0, n, func(worker int, b *part.Block, i int) bool { return r.one(worker, b, i, &units[i]) })
+	default:
+		r.paced(q, lists)
+	}
 }
 
 // checksEach is the fewest units that a goroutine is started to check: a
 // check takes a few microseconds.
 const checksEach = 16
+
+// orderedAhead is how many units are put in order at a time for goroutines
+// that take what the bound leaves.
+const orderedAhead = 256
 
 // paced scans the units of a scan by time in rounds. A round checks units
 // in their order until as many as its size are to be opened, opens those,
@@ -635,26 +671,43 @@ const checksEach = 16
 // opens more blocks than all before it together, or than there are
 // goroutines, so that rows which come unevenly cost no more blocks than
 // the scan has opened already.
-func (r *scanRun) paced(lists *scanLists) {
-	units := r.units
+func (r *scanRun) paced(q *unitQueue, lists *scanLists) {
+	n := len(r.units)
+	units := q.out[:n]
 	// Without tokens and a range every unit is opened unchecked.
 	checks := len(r.opts.Tokens) > 0 || len(r.opts.ColumnTokens) > 0 || r.minT != math.MinInt64 || r.maxT != math.MaxInt64
 	waiting, checked := lists.waiting[:0], lists.checked
 	// The units before done are checked, of which admitted were to be
 	// opened; waiting[head:] are those not opened yet. The bound rules out
-	// the units from end on.
-	done, admitted, head, end := 0, 0, 0, len(units)
+	// the units from end on, as far as they are in order.
+	done, admitted, head, end := 0, 0, 0, n
 	unmoved := r.opts.Bound.Load()
+	bound := unmoved
+	// give puts the units before k in order, up to the first that the
+	// bound rules out.
+	give := func(k int) {
+		from := len(q.out)
+		to := q.fill(min(k, end))
+		if e := from + sort.Search(max(to-from, 0), func(i int) bool { return r.ruledOut(&units[from+i], bound) }); e < to {
+			end = e
+		}
+	}
 	round, opened, had := 1, 0, 0
 	for r.ctx.Err() == nil {
-		bound := r.opts.Bound.Load()
-		end = sort.Search(end, func(i int) bool { return r.ruledOut(&units[i], bound) })
+		bound = r.opts.Bound.Load()
+		given := min(end, len(q.out))
+		if e := sort.Search(given, func(i int) bool { return r.ruledOut(&units[i], bound) }); e < given {
+			end = e
+		}
 		for len(waiting) > head && int(waiting[len(waiting)-1]) >= end {
 			waiting = waiting[:len(waiting)-1]
 		}
 		if bound != unmoved && opened == 1 {
+			for len(q.out) < end {
+				give(len(q.out) + orderedAhead)
+			}
 			rest := len(waiting) - head
-			r.each(r.workers, 0, rest+end-done, func(worker int, b *part.Block, i int) bool {
+			r.each(r.workers, 0, rest+max(end-done, 0), func(worker int, b *part.Block, i int) bool {
 				if i >= rest {
 					return r.one(worker, b, i, &units[done+i-rest])
 				}
@@ -672,19 +725,25 @@ func (r *scanRun) paced(lists *scanLists) {
 		}
 		for len(waiting)-head < round && done < end && r.ctx.Err() == nil {
 			run := round - (len(waiting) - head)
+			if checks {
+				// Units are checked ahead by the share of them admitted
+				// so far and half again: a check costs far less than a
+				// round that opens fewer blocks than it could.
+				run = run * (done + 1) / (admitted + 1)
+				run += run / 2
+			}
+			give(done + run)
+			if run = min(run, end-done); run <= 0 {
+				break
+			}
 			if !checks {
-				for i := done; i < min(done+run, end); i++ {
+				for i := done; i < done+run; i++ {
 					waiting = append(waiting, int32(i))
 				}
-				done = min(done+run, end)
+				done += run
 
 				continue
 			}
-			// Units are checked ahead by the share of them admitted so
-			// far and half again: a check costs far less than a round
-			// that opens fewer blocks than it could.
-			run = run * (done + 1) / (admitted + 1)
-			run = min(run+run/2, end-done)
 			if cap(checked) < run {
 				checked = make([]bool, run)
 			}

@@ -5,133 +5,168 @@ import (
 	"slices"
 )
 
-// unitRun is the units of one part that a merge has yet to take: at is the
-// next one, and group ends the units that share its time.
+// unitRun is a stretch of the units of a scan, as they are listed, that are
+// in the order of time already or in its reverse: the units from at to
+// end, end left out, taken upwards, or downwards when end is below at.
 type unitRun struct {
-	units     []scanUnit
-	at, group int
+	// key is what orders the unit at at.
+	key     int64
+	at, end int32
 }
 
-// orderUnits returns units in the order a stable sort by time gives them:
-// by their first time when latest is unset, by their last time, latest
-// first, when it is set. The units of a part follow each other and, in a
-// part ordered by time, are in order already, so the parts are merged. The
-// result is in out's room and shares none with units.
-func orderUnits(units, out []scanUnit, latest bool) []scanUnit {
-	key := func(u *scanUnit) int64 {
+// heapShare is one in how many of its units a scan takes from runs that are
+// about as many as the units before those left are sorted: taking a unit
+// from so many runs costs several times its share of a sort.
+const heapShare = 8
+
+// unitQueue gives the units of a scan in the order that a stable sort by
+// time gives them: by their first time, or when latest is set by their last
+// time, latest first. It orders no more of them than the scan takes, since
+// a scan by time often ends after few: the units are merged from the runs
+// that are in order as they are listed, which are the parts of a table kept
+// in the order of time and a block or two each of one kept in another.
+type unitQueue struct {
+	units  []scanUnit
+	latest bool
+	// out holds the units given so far, in order, in room for all.
+	out []scanUnit
+	// runs is a heap of the runs that hold units not given yet; its root
+	// holds the next one. short is set when the runs were about as many as
+	// the units.
+	runs  []unitRun
+	short bool
+}
+
+// key returns what orders unit i: its time, turned so that the unit to
+// take first has the least.
+func (q *unitQueue) key(i int) int64 {
+	if q.latest {
+		return ^q.units[i].last
+	}
+
+	return q.units[i].first
+}
+
+// before reports whether run a gives its next unit before run b does;
+// units of one time come as they are listed.
+func (a *unitRun) before(b *unitRun) bool {
+	return a.key < b.key || (a.key == b.key && a.at < b.at)
+}
+
+// reset makes q give units, from the first one on.
+func (q *unitQueue) reset(units []scanUnit, latest bool) {
+	q.units, q.latest = units, latest
+	q.out = slices.Grow(q.out[:0], len(units))
+	runs := q.runs[:0]
+	for i, n := 0, len(units); i < n; {
+		j := i + 1
+		if j < n && q.key(j) < q.key(i) {
+			// Units of one time keep their order, so a run that is taken
+			// downwards holds none.
+			for j < n && q.key(j) < q.key(j-1) {
+				j++
+			}
+			runs = append(runs, unitRun{key: q.key(j - 1), at: int32(j - 1), end: int32(i - 1)})
+		} else {
+			for j < n && q.key(j) >= q.key(j-1) {
+				j++
+			}
+			runs = append(runs, unitRun{key: q.key(i), at: int32(i), end: int32(j)})
+		}
+		i = j
+	}
+	q.runs, q.short = runs, len(runs) > len(units)/4
+	for i := len(runs)/2 - 1; i >= 0; i-- {
+		q.down(i)
+	}
+}
+
+// fill gives units until at least k are given or none is left, and returns
+// how many are given.
+func (q *unitQueue) fill(k int) int {
+	n := len(q.units)
+	k = min(k, n)
+	if len(q.out) >= k {
+		return len(q.out)
+	}
+	if q.short && k > n/heapShare {
+		return q.sortRest()
+	}
+	for len(q.out) < k {
+		r := &q.runs[0]
+		q.out = append(q.out, q.units[r.at])
+		if r.end > r.at {
+			r.at++
+		} else {
+			r.at--
+		}
+		if r.at == r.end {
+			last := len(q.runs) - 1
+			q.runs[0] = q.runs[last]
+			q.runs = q.runs[:last]
+		} else {
+			r.key = q.key(int(r.at))
+		}
+		q.down(0)
+	}
+
+	return len(q.out)
+}
+
+// sortRest gives every unit that is left and returns their number in all.
+func (q *unitQueue) sortRest() int {
+	given := len(q.out)
+	for _, r := range q.runs {
+		step := int32(1)
+		if r.end < r.at {
+			step = -1
+		}
+		for at := r.at; at != r.end; at += step {
+			q.out = append(q.out, q.units[at])
+		}
+	}
+	q.runs = q.runs[:0]
+	latest := q.latest
+	// The units are listed part by part and block by block.
+	slices.SortFunc(q.out[given:], func(a, b scanUnit) int {
+		ka, kb := a.first, b.first
 		if latest {
-			return u.last
+			ka, kb = b.last, a.last
+		}
+		if c := cmp.Compare(ka, kb); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.part, b.part); c != 0 {
+			return c
 		}
 
-		return u.first
-	}
-	var runs []unitRun
-	for from := 0; from < len(units); {
-		to := from + 1
-		for to < len(units) && units[to].part == units[from].part {
-			if key(&units[to]) < key(&units[to-1]) {
-				return sortUnits(append(out[:0], units...), latest)
-			}
-			to++
-		}
-		runs = append(runs, unitRun{units: units[from:to]})
-		from = to
-	}
-	for i := range runs {
-		runs[i].start(latest)
-	}
-	// before reports whether run a gives its next unit before run b does.
-	before := func(a, b int32) bool {
-		ka, kb := key(&runs[a].units[runs[a].at]), key(&runs[b].units[runs[b].at])
-		if ka != kb {
-			return (ka < kb) != latest
-		}
+		return cmp.Compare(a.block, b.block)
+	})
 
-		return a < b
-	}
-	heap := make([]int32, 0, len(runs))
-	down := func(i int) {
-		for {
-			least := i
-			for c := 2*i + 1; c <= 2*i+2 && c < len(heap); c++ {
-				if before(heap[c], heap[least]) {
-					least = c
-				}
-			}
-			if least == i {
-				return
-			}
-			heap[i], heap[least] = heap[least], heap[i]
-			i = least
-		}
-	}
-	for i := range runs {
-		heap = append(heap, int32(i))
-	}
-	for i := len(heap)/2 - 1; i >= 0; i-- {
-		down(i)
-	}
-	out = out[:0]
-	for len(heap) > 0 {
-		r := &runs[heap[0]]
-		out = append(out, r.units[r.at])
-		if !r.next(latest) {
-			heap[0] = heap[len(heap)-1]
-			heap = heap[:len(heap)-1]
-		}
-		down(0)
-	}
-
-	return out
+	return len(q.out)
 }
 
-// start puts the run before its first unit in the order of the merge.
-func (r *unitRun) start(latest bool) {
-	if !latest {
-		r.at, r.group = 0, len(r.units)
-
+// down moves the run at i of the heap below the runs that give a unit
+// before it does.
+func (q *unitQueue) down(i int) {
+	runs := q.runs
+	if i >= len(runs) {
 		return
 	}
-	r.group = len(r.units)
-	r.at = r.groupStart(r.group)
-}
-
-// groupStart returns where the units that share the last time of the one
-// before end begin.
-func (r *unitRun) groupStart(end int) int {
-	at := end - 1
-	for at > 0 && r.units[at-1].last == r.units[end-1].last {
-		at--
+	run := runs[i]
+	for {
+		child := 2*i + 1
+		if child >= len(runs) {
+			break
+		}
+		if r := child + 1; r < len(runs) && runs[r].before(&runs[child]) {
+			child = r
+		}
+		if !runs[child].before(&run) {
+			break
+		}
+		runs[i] = runs[child]
+		i = child
 	}
-
-	return at
-}
-
-// next moves to the unit after the one at hand and reports whether there
-// is one. Latest first, the units that share a time keep their order.
-func (r *unitRun) next(latest bool) bool {
-	if r.at++; r.at < r.group {
-		return true
-	}
-	if !latest {
-		return false
-	}
-	end := r.groupStart(r.group)
-	if end == 0 {
-		return false
-	}
-	r.group = end
-	r.at = r.groupStart(end)
-
-	return true
-}
-
-func sortUnits(units []scanUnit, latest bool) []scanUnit {
-	if latest {
-		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(b.last, a.last) })
-	} else {
-		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(a.first, b.first) })
-	}
-
-	return units
+	runs[i] = run
 }
