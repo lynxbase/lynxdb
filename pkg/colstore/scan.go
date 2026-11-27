@@ -511,7 +511,16 @@ func (r *scanRun) admit(u *scanUnit) bool {
 	// A block that the range cuts may hold no row inside it, which its
 	// rows by bucket of time tell; reading them takes microseconds a
 	// block, so the scan's goroutines do it.
-	if (u.first < r.minT || u.last > r.maxT) && p.NoneWithin(int(u.block), r.minT, r.maxT) {
+	lo := r.minT
+	if r.opts.ByTime < 0 && r.opts.Bound != nil && u.last > r.maxT {
+		lo = max(lo, r.opts.Bound.Load())
+	}
+	if (u.first < lo || u.last > r.maxT) && p.NoneWithin(int(u.block), lo, r.maxT) {
+		if lo > r.minT {
+			// An earlier match can still exist in this block. Count this
+			// skip against the page bound and leave the predicate cache intact.
+			return false
+		}
 		r.late.Add(1)
 		if empty := r.empties[u.part]; empty != nil {
 			empty.Add(int(u.block))

@@ -195,3 +195,37 @@ func latestRuns(b *testing.B, snap *colstore.Snapshot, plan exec.Node, opts exec
 	b.ReportMetric(float64(rows)/float64(b.N), "rows-matched/op")
 	b.ReportMetric(float64(len(counts)), "counts-seen")
 }
+
+// BenchmarkTimeWindowWord searches an hour of a day ordered by other keys,
+// without reusing the matches of the preceding request.
+func BenchmarkTimeWindowWord(b *testing.B) {
+	s := latestStore(b, b.TempDir(), 480000, 1, 2048, 8, benchSortKey)
+	defer s.Close()
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	var last int64
+	for _, p := range snap.Parts() {
+		last = max(last, p.MaxTime)
+	}
+	t := time.Unix(0, last).UTC().Add(-12 * time.Hour)
+	q := fmt.Sprintf("source=bluesky earliest='%s' latest='%s' | where match(commit.record.text,'earthquake') | fields _time | sort - _time | head 20", t.Format(time.RFC3339Nano), t.Add(time.Hour).Format(time.RFC3339Nano))
+	plan, err := pplPlan(q, time.Time{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	full, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: 1, Forgetful: true})
+	if err != nil || full.Rows != 20 {
+		b.Fatalf("reference: %v %v", full, err)
+	}
+	for _, workers := range []int{1, 4} {
+		b.Run(fmt.Sprint(workers), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				got, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: workers, Forgetful: true})
+				if err != nil || got.Rows != 20 {
+					b.Fatalf("got %v %v", got, err)
+				}
+			}
+		})
+	}
+}

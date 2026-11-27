@@ -510,6 +510,17 @@ func (w *worker) evalAnd(p *pred, depth int) (verdict, error) {
 		if w.decide(a) == all {
 			continue
 		}
+		// A narrow time range can leave only a few rows in a block
+		// ordered by other keys. Search those strings directly.
+		if have && w.q.byTime < 0 && a.kind == predStr && a.op == OpMatch {
+			used, err := w.matchSelected(a, acc)
+			if err != nil || used && len(acc.list) == 0 {
+				return none, err
+			}
+			if used {
+				continue
+			}
+		}
 		v, err := w.eval(a, depth+1)
 		switch {
 		case err != nil || v == none:
@@ -531,6 +542,38 @@ func (w *worker) evalAnd(p *pred, depth int) (verdict, error) {
 	}
 
 	return some, nil
+}
+
+// matchSelected refines a sparse selection in place. Dense input and
+// shared dictionaries use the block matcher.
+func (w *worker) matchSelected(p *pred, s *selection) (bool, error) {
+	if !s.listed {
+		if vec.MaskCount(s.mask) > w.rows/8 {
+			return false, nil
+		}
+		s.list = vec.MaskIndexes(s.list[:0], s.mask)
+		s.listed = true
+	}
+	if len(s.list) > w.rows/8 {
+		return false, nil
+	}
+	if d, _ := w.dictionary(p.path); d != nil {
+		return false, nil
+	}
+	c, err := w.column(p.path, vec.KindString)
+	if err != nil {
+		return false, err
+	}
+	out := s.list[:0]
+	if c != nil {
+		for _, i := range s.list {
+			if c.IsValid(int(i)) && p.pat.Match(c.Bytes(int(i))) {
+				out = append(out, i)
+			}
+		}
+	}
+	s.list = out
+	return true, nil
 }
 
 // intersect keeps in acc the rows that other selects too.
