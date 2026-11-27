@@ -58,13 +58,13 @@ func TestQueryExplain_Valid(t *testing.T) {
 
 	parsed := explainParsed(t, getExplain(t, srv, `search source=main error | head 10`))
 
-	for _, key := range []string{"logical_plan", "optimized_plan"} {
+	for key, limit := range map[string]string{"logical_plan": "Limit(10)", "optimized_plan": "TopN(10, _time DESC NULLS LAST)"} {
 		plan, _ := parsed[key].(string)
 		if !strings.Contains(plan, "Scan(main)") {
 			t.Fatalf("%s missing Scan(main): %s", key, plan)
 		}
-		if !strings.Contains(plan, "Limit(10)") {
-			t.Fatalf("%s missing Limit(10): %s", key, plan)
+		if !strings.Contains(plan, limit) {
+			t.Fatalf("%s missing %s: %s", key, limit, plan)
 		}
 	}
 	terms, _ := parsed["search_terms"].([]interface{})

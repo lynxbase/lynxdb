@@ -250,6 +250,17 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			}
 		}
 		q.lateRows(snap, prj)
+		if len(q.order) != 0 {
+			// After the user keys tie, prefer the earlier row of the pinned
+			// snapshot, independent of which worker received its block.
+			if !q.rest {
+				q.rowExprs = append(q.rowExprs, &sexpr{op: opPlace})
+				q.names = append(q.names, placeName)
+				q.places = true
+			}
+			q.order = append(q.order, orderSpec{col: len(q.names) - 1})
+			q.ranked = q.order
+		}
 	}
 	if srt != nil {
 		for _, name := range srt.Hide {

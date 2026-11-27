@@ -264,6 +264,30 @@ func (t *translator) aboveSort(n ir.Node) error {
 	switch n := n.(type) {
 	case *ir.Limit:
 		return t.limit(n)
+	case *ir.Filter:
+		if t.sort.Limit != 0 || t.agg != nil || t.dedup != nil {
+			return refused
+		}
+		p, err := t.pred(n.Cond, false)
+		if err != nil {
+			return err
+		}
+		t.filter = append(t.filter, p)
+		return nil
+	case *ir.Extract:
+		for _, c := range n.Outputs {
+			if sorts(c.Name) {
+				return refused
+			}
+		}
+		return t.extract(n)
+	case *ir.RenameColumns:
+		for _, rename := range n.Renames {
+			if sorts(rename.From) || sorts(rename.To) {
+				return refused
+			}
+		}
+		return t.rename(n)
 	case *ir.Project:
 		// What the sort reads keeps ordering the rows when the choice of
 		// columns leaves it out.

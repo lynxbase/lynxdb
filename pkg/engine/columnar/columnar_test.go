@@ -494,3 +494,30 @@ func TestFieldsNoIndexHolds(t *testing.T) {
 		}
 	}
 }
+
+func TestNewestTiesFollowSnapshotOrder(t *testing.T) {
+	tables := testTables{
+		"a": tableOf(t, `{"ts":1700000000,"id":1}`, `{"ts":1700000000,"id":2}`, `{"ts":1690000000,"id":3}`),
+		"b": tableOf(t, `{"ts":1700000001,"id":4}`, `{"ts":1700000000,"id":5}`),
+	}
+	for queryText, want := range map[string]string{
+		"source=a,b | fields id":                         "id=4; id=1; id=2; id=5; id=3",
+		"source=a,b | fields id | head 3":                "id=4; id=1; id=2",
+		"source=a,b | sort - _time | head 3 | fields id": "id=4; id=1; id=2",
+		"source=a,b | sort id | head 2 | fields id":      "id=1; id=2",
+	} {
+		c, err := query.Compile(queryText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, workers := range []int{1, 4, 8} {
+			res, err := Run(t.Context(), c.Plan, tables, Options{Workers: workers})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(res.Maps()); got != want {
+				t.Errorf("%s with %d workers: %s, want %s", queryText, workers, got, want)
+			}
+		}
+	}
+}

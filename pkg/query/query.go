@@ -73,11 +73,12 @@ func compile(src string, opts Options) (*Compiled, error) {
 	if err != nil {
 		return nil, err
 	}
-	plan, applied := opt.Optimize(res.Plan, opt.Options{Fold: Fold})
+	logical := &ir.Plan{Root: eventOrder(res.Plan.Root, true)}
+	plan, applied := opt.Optimize(logical, opt.Options{Fold: Fold})
 	if err := ir.Validate(plan); err != nil {
 		return nil, fmt.Errorf("optimizer produced an invalid plan: %w", err)
 	}
-	return &Compiled{Source: src, Logical: res.Plan, Plan: plan, Applied: applied,
+	return &Compiled{Source: src, Logical: logical, Plan: plan, Applied: applied,
 		Explain: res.Explain, ExplainMode: res.ExplainMode, Sources: res.Sources}, nil
 }
 

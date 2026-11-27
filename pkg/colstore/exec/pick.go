@@ -294,7 +294,7 @@ func (x *execution) shown(snap *colstore.Snapshot, out []colVec, n int) ([]Colum
 	}
 	shown := make([]Column, 0, len(out))
 	for c, name := range names {
-		if slices.Contains(q.hide, name) {
+		if name == placeName || slices.Contains(q.hide, name) {
 			continue
 		}
 		col := out[c].column(name)
