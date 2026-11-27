@@ -6,95 +6,113 @@ import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 import Layout from '@theme/Layout';
 
+import MarkdownAlternate from '../components/MarkdownAlternate';
+import content from '../../homepage.json';
+
 import styles from './index.module.css';
 
-const query = String.raw`lynxdb query --file access.ndjson \
-  --format csv --no-stats '
-  source=main
-  | where status >= 500
-  | stats count() as errors by service'`;
+const {title, description, lead, example, actions, guides, references} = content;
+const [quickStart, install] = actions;
 
-const sections = [
-  {
-    title: 'Getting started',
-    description: 'Install LynxDB, query a local file, or start a server.',
-    to: '/docs/getting-started/quickstart',
-  },
-  {
-    title: 'PPL guide',
-    description: 'Search events, extract fields, and aggregate logs. Look up supported commands and functions.',
-    to: '/docs/ppl/overview',
-  },
-  {
-    title: 'Ingest data',
-    description: 'Send logs over HTTP, OpenTelemetry, Splunk HEC, or syslog. Find settings for your shipper.',
-    to: '/docs/guides/ingest-data',
-  },
-  {
-    title: 'Deploy and operate',
-    description: 'Configure storage, retention, authentication, and backups for a single-node server.',
-    to: '/docs/deployment/single-node',
-  },
-];
+function Arrow(): ReactNode {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none">
+      <path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title="Log analytics database"
-      description="Query log files and standard input with OpenSearch PPL, or run a LynxDB server that stores logs on disk.">
+      title="Documentation"
+      description={description}>
+      <MarkdownAlternate permalink={siteConfig.baseUrl} />
       <Head>
         <script type="application/ld+json">
           {JSON.stringify({
             '@context': 'https://schema.org',
-            '@type': 'WebSite',
-            name: 'LynxDB',
-            url: new URL(siteConfig.baseUrl, siteConfig.url).href,
-            inLanguage: 'en',
+            '@graph': [
+              {
+                '@type': 'WebSite',
+                name: title,
+                url: new URL(siteConfig.baseUrl, siteConfig.url).href,
+                inLanguage: 'en',
+                publisher: {'@id': 'https://lynxdb.org/#organization'},
+                about: {'@id': 'https://lynxdb.org/#source-code'},
+              },
+              {
+                '@type': 'Organization',
+                '@id': 'https://lynxdb.org/#organization',
+                name: 'LynxDB',
+                url: 'https://lynxdb.org/',
+              },
+              {
+                '@type': 'SoftwareSourceCode',
+                '@id': 'https://lynxdb.org/#source-code',
+                name: 'LynxDB',
+                codeRepository: 'https://github.com/lynxbase/lynxdb',
+                license: 'https://www.apache.org/licenses/LICENSE-2.0',
+              },
+            ],
           })}
         </script>
       </Head>
       <main>
         <header className={styles.hero}>
-          <div className={styles.heroGrid}>
+          <div className={`wrap ${styles.heroGrid}`}>
             <div className={styles.intro}>
-              <Heading as="h1">Log analytics<br /> in one binary</Heading>
-              <p>Query files and standard input with OpenSearch PPL, or run a LynxDB server that stores logs on disk.</p>
+              <Heading as="h1">{title}</Heading>
+              <p>{lead}</p>
               <div className={styles.actions}>
-                <Link className="button button--primary button--lg" to="/docs/getting-started/quickstart">
-                  Quick start
+                <Link className={styles.primary} to={quickStart.to}>
+                  {quickStart.title} <Arrow />
                 </Link>
-                <Link to="/docs/getting-started/install">Installation options</Link>
+                <Link className={styles.secondary} to={install.to}>{install.title}</Link>
               </div>
             </div>
             <figure className={styles.example}>
-              <figcaption>Count HTTP 5xx responses by service</figcaption>
+              <figcaption>{example.title}</figcaption>
               <div className={styles.command}>
-                <CodeBlock language="bash">{query}</CodeBlock>
+                <CodeBlock language="bash">{example.command}</CodeBlock>
               </div>
               <div className={styles.result} aria-label="Example output">
-                <pre>{'errors,service\n2,api'}</pre>
+                <pre>{example.output}</pre>
               </div>
             </figure>
           </div>
         </header>
 
-        <section className={styles.directory} aria-labelledby="docs-title">
-          <Heading as="h2" id="docs-title">Documentation</Heading>
-          <ul>
-            {sections.map(({title, description, to}) => (
-              <li key={to}>
-                <Link to={to}>{title}</Link>
-                <span>{description}</span>
-              </li>
-            ))}
-          </ul>
-          <nav className={styles.referenceLinks} aria-label="Reference">
-            <Link to="/docs/cli/overview">CLI reference</Link>
-            <Link to="/docs/api/overview">REST API</Link>
-            <Link to="/docs/architecture/overview">Architecture</Link>
-          </nav>
-        </section>
+        <div className={`wrap ${styles.directory}`}>
+          <section aria-labelledby="guides-title">
+            <Heading as="h2" id="guides-title">Guides</Heading>
+            <ul>
+              {guides.map(({title, description, to}) => (
+                <li key={to}>
+                  <Link className={styles.topic} to={to}>
+                    <span className={styles.topicTitle}>{title}</span>
+                    <span className={styles.topicDescription}>{description}</span>
+                    <Arrow />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section aria-labelledby="reference-title">
+            <Heading as="h2" id="reference-title">Reference</Heading>
+            <ul>
+              {references.map(({title, to}) => (
+                <li key={to}>
+                  <Link className={styles.topic} to={to}>
+                    <span className={styles.topicTitle}>{title}</span>
+                    <Arrow />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
       </main>
     </Layout>
   );

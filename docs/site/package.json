@@ -26,12 +26,14 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@cloudflare/build-output-utils": "1.0.0-rc.4",
     "@docusaurus/module-type-aliases": "3.9.2",
     "@docusaurus/tsconfig": "3.9.2",
     "@docusaurus/types": "3.9.2",
     "@docusaurus/utils": "3.9.2",
     "@docusaurus/utils-common": "3.9.2",
     "@slorber/remark-comment": "1.0.0",
+    "js-yaml": "4.1.1",
     "remark-directive": "3.0.1",
     "remark-gfm": "4.0.1",
     "remark-mdx": "3.1.1",

@@ -33,13 +33,21 @@ jobs:
       - run: mise run docs
       - name: Deploy documentation Worker
         working-directory: docs/site
-        run: mise x node@26.12.1 -- npx --yes cf@1.0.0-rc.6 deploy ./build
+        run: |
+          mise x node@26.12.1 -- node worker/build.mjs
+          mise x node@26.12.1 -- npx --yes cf@1.0.0-rc.6 deploy --prebuilt
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_DOCS_WORKERS_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_SEND_TELEMETRY: 'false'
       - name: Verify crawler files
         run: |
-          for file in robots.txt sitemap.xml llms.txt llms-full.txt; do
+          for file in robots.txt sitemap.xml llms.txt llms-full.txt openapi.json openapi.yaml; do
             curl --fail --silent --show-error --retry 4 --output /dev/null "https://docs.lynxdb.org/$file"
+          done
+          for route in / /docs/ppl/overview/; do
+            content_type=$(curl --fail --silent --show-error --retry 4 \
+              --header 'Accept: text/markdown' --output /dev/null --write-out '%{content_type}' \
+              "https://docs.lynxdb.org$route")
+            [[ "$content_type" == text/markdown* ]]
           done

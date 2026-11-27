@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "geist",
+        "files": [
+          "docs/site/src/css/brand.css"
+        ],
+        "createdAt": "2026-11-27T10:07:43.822Z",
+        "reason": "LynxDB design system: Geist is the display and body typeface shared by lynxdb.org and the documentation."
+      }
+    ]
+  }
+}

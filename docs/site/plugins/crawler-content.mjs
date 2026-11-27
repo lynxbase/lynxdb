@@ -9,6 +9,7 @@ import {
 } from '@docusaurus/utils';
 import {applyTrailingSlash} from '@docusaurus/utils-common';
 import comment from '@slorber/remark-comment';
+import yaml from 'js-yaml';
 import directive from 'remark-directive';
 import gfm from 'remark-gfm';
 import mdx from 'remark-mdx';
@@ -55,6 +56,7 @@ function plainBlocks(nodes) {
 }
 
 function canonicalLink(value, page, bySource, byRoute) {
+  value = value.replace(/^pathname:\/\//, '');
   const url = new URL(value, page.url);
   if (url.origin !== page.url.origin) {
     return url.href;
@@ -117,7 +119,7 @@ function docIds(item) {
   return [];
 }
 
-function groupDocs(versions, blogPosts, pages) {
+function groupDocs(versions, pages) {
   const groups = new Map();
   for (const {docs, sidebars} of versions) {
     const byId = new Map(docs.map((doc) => [doc.id, doc]));
@@ -134,11 +136,7 @@ function groupDocs(versions, blogPosts, pages) {
       }
     }
   }
-  const posts = blogPosts.map(({permalink}) => pages.get(permalink)).filter(Boolean);
-  if (posts.length) {
-    groups.set('Blog', posts);
-  }
-  const otherDocs = [...pages.values()].filter((page) => !page.group && !posts.includes(page));
+  const otherDocs = [...pages.values()].filter((page) => !page.group);
   if (otherDocs.length) {
     groups.set('Other documentation', otherDocs);
   }
@@ -151,20 +149,39 @@ function indexEntry(page) {
   return `- [${title}](${page.markdownUrl})${description ? `: ${description}` : ''}`;
 }
 
+function homepageMarkdown(homepage, home, byRoute) {
+  const link = ({title, description, to}) => {
+    const url = new URL(byRoute.get(to) ?? to, home);
+    return `- [${title}](${url})${description ? `: ${description}` : ''}`;
+  };
+  return [
+    `# ${homepage.title}`,
+    `Source: [${home}](${home})`,
+    homepage.lead,
+    homepage.actions.map(link).join('\n'),
+    `## ${homepage.example.title}`,
+    `\`\`\`bash\n${homepage.example.command}\n\`\`\``,
+    `\`\`\`csv\n${homepage.example.output}\n\`\`\``,
+    '## Guides',
+    homepage.guides.map(link).join('\n'),
+    '## Reference',
+    homepage.references.map(link).join('\n'),
+  ].join('\n\n') + '\n';
+}
+
 export default function crawlerContent() {
   let versions;
-  let blogPosts;
   return {
     name: 'lynxdb-crawler-content',
     allContentLoaded({allContent}) {
       versions = allContent['docusaurus-plugin-content-docs'].default.loadedVersions;
-      blogPosts = allContent['docusaurus-plugin-content-blog'].default.blogPosts.map(({metadata}) => metadata);
     },
     async postBuild({siteConfig, siteDir, outDir, routes, routesBuildMetadata}) {
       const canonicalPath = (pathname) => applyTrailingSlash(pathname, siteConfig);
       const routePaths = flattenRoutes(routes).map(({path: pathname}) => canonicalPath(pathname));
       const byRoute = new Map(routePaths.map((pathname) => [pathname.replace(/\/$/, ''), pathname]));
-      const sitemap = new URL('sitemap.xml', new URL(siteConfig.baseUrl, siteConfig.url));
+      const home = new URL(siteConfig.baseUrl, siteConfig.url);
+      const sitemap = new URL('sitemap.xml', home);
       const robots = siteConfig.noIndex
         ? 'User-agent: *\nDisallow: /\n'
         : `User-agent: *\nAllow: /\n\nSitemap: ${sitemap}\n`;
@@ -175,11 +192,20 @@ export default function crawlerContent() {
         ...(pathname === '/' ? [] : [`${pathname.slice(0, -1)} ${pathname} 308`]),
         `${pathname}index.html ${pathname} 308`,
       ]);
+      // The project website hosts the blog and its RSS feed.
+      redirects.push(
+        '/blog https://lynxdb.org/blog/ 308',
+        '/blog/rss.xml https://lynxdb.org/blog/feed.xml 308',
+        '/blog/atom.xml https://lynxdb.org/blog/feed.xml 308',
+        '/blog/* https://lynxdb.org/blog/ 308',
+      );
       await writeFile(path.join(outDir, '_redirects'), `${[...new Set(redirects)].join('\n')}\n`);
       const headers = [
         '/*\n  Access-Control-Allow-Origin: *\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin',
         '/assets/*\n  Cache-Control: public, max-age=31536000, immutable',
         `/*.md\n  Content-Type: text/markdown; charset=utf-8\n  Link: <${siteConfig.url}/:splat/>; rel="canonical"`,
+        `/index.md\n  ! Link\n  Link: <${home}>; rel="canonical"`,
+        '/openapi.yaml\n  Content-Type: application/yaml',
         '/search/\n  X-Robots-Tag: noindex, follow',
         'https://:worker.:subdomain.workers.dev/*\n  X-Robots-Tag: noindex',
       ];
@@ -189,9 +215,16 @@ export default function crawlerContent() {
         return;
       }
 
+      const [homeContent, apiYaml] = await Promise.all([
+        readFile(path.join(siteDir, 'homepage.json'), 'utf8'),
+        readFile(path.join(outDir, 'api', 'swagger.yaml'), 'utf8'),
+      ]);
+      const landing = homepageMarkdown(JSON.parse(homeContent), home, byRoute);
+      const api = yaml.load(apiYaml, {schema: yaml.JSON_SCHEMA});
+
       const pages = new Map();
       const bySource = new Map();
-      const documents = [...versions.flatMap(({docs}) => docs), ...blogPosts];
+      const documents = versions.flatMap(({docs}) => docs);
       for (const doc of documents) {
         const url = new URL(canonicalPath(doc.permalink), siteConfig.url);
         const file = path.join(siteDir, aliasedSitePathToRelativePath(doc.source));
@@ -207,14 +240,17 @@ export default function crawlerContent() {
         '# LynxDB',
         '> LynxDB is an open-source log analytics database. Run OpenSearch Piped Processing Language (PPL) queries on local files and standard input, or ingest and query logs on a persistent server.',
       ];
-      const groups = groupDocs(versions, blogPosts, pages);
+      const groups = groupDocs(versions, pages);
       const index = [...introduction];
+      index.push(`## Documentation home\n\n- [LynxDB documentation](${new URL('index.md', home)}): Guides, reference links and a first query example.`);
       for (const [title, entries] of groups) {
         index.push(`## ${title}\n\n${entries.map(indexEntry).join('\n')}`);
       }
       index.push('## Optional\n\n' + [
-        `- [Complete documentation](${new URL('llms-full.txt', sitemap)}): All listed pages in a single Markdown file.`,
-        `- [OpenAPI specification](${new URL('api/swagger.yaml', sitemap)}): Machine-readable REST API endpoints and schemas.`,
+        `- [Complete documentation](${new URL('llms-full.txt', home)}): All listed pages in a single Markdown file.`,
+        `- [OpenAPI JSON](${new URL('openapi.json', home)}): REST API endpoints and schemas.`,
+        `- [OpenAPI YAML](${new URL('openapi.yaml', home)}): The same API contract in YAML.`,
+        '- [LynxDB website and blog index](https://lynxdb.org/llms.txt): Product site and articles.',
       ].join('\n'));
 
       const full = await Promise.all([...groups.values()].flat().map(async (page) => {
@@ -225,8 +261,11 @@ export default function crawlerContent() {
         }
       }));
       await Promise.all([
+        writeFile(path.join(outDir, 'index.md'), landing),
+        writeFile(path.join(outDir, 'openapi.yaml'), apiYaml),
+        writeFile(path.join(outDir, 'openapi.json'), `${JSON.stringify(api, null, 2)}\n`),
         writeFile(path.join(outDir, 'llms.txt'), `${index.join('\n\n')}\n`),
-        writeFile(path.join(outDir, 'llms-full.txt'), `${introduction.join('\n\n')}\n\n---\n\n${full.join('\n---\n\n')}`),
+        writeFile(path.join(outDir, 'llms-full.txt'), `${[landing, ...full].join('\n---\n\n')}`),
       ]);
     },
   };

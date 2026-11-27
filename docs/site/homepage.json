@@ -1,0 +1,56 @@
+{
+  "title": "LynxDB documentation",
+  "description": "Query log files and standard input with OpenSearch PPL, or run a LynxDB server that stores logs on disk.",
+  "lead": "Query log files and standard input with OpenSearch PPL, or run a server to ingest and search logs from your services.",
+  "example": {
+    "title": "Count HTTP 5xx responses by service",
+    "command": "lynxdb query --file access.ndjson \\\n  --format csv --no-stats '\n  source=main\n  | where status >= 500\n  | stats count() as errors by service'",
+    "output": "errors,service\n2,api"
+  },
+  "actions": [
+    {
+      "title": "Quick start",
+      "to": "/docs/getting-started/quickstart"
+    },
+    {
+      "title": "Install LynxDB",
+      "to": "/docs/getting-started/install"
+    }
+  ],
+  "guides": [
+    {
+      "title": "Getting started",
+      "description": "Install LynxDB and run your first query on a local file or a server.",
+      "to": "/docs/getting-started/quickstart"
+    },
+    {
+      "title": "PPL guide",
+      "description": "Search events, extract fields, and look up PPL commands and functions.",
+      "to": "/docs/ppl/overview"
+    },
+    {
+      "title": "Ingest data",
+      "description": "Send logs over HTTP, OpenTelemetry, Splunk HEC, or syslog.",
+      "to": "/docs/guides/ingest-data"
+    },
+    {
+      "title": "Deploy and operate",
+      "description": "Configure storage, retention, authentication, and backups.",
+      "to": "/docs/deployment/single-node"
+    }
+  ],
+  "references": [
+    {
+      "title": "CLI reference",
+      "to": "/docs/cli/overview"
+    },
+    {
+      "title": "REST API",
+      "to": "/docs/api/overview"
+    },
+    {
+      "title": "Architecture",
+      "to": "/docs/architecture/overview"
+    }
+  ]
+}

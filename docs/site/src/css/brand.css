@@ -1,0 +1,81 @@
+@font-face {
+  font-family: Geist;
+  src: url('/fonts/geist-latin-wght-normal.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+/* Colors and faces from lynxdb.org/DESIGN.md and its design-system tokens. */
+:root {
+  --lynx-ground: #f1f3ef;
+  --lynx-surface: #fdfefc;
+  --lynx-well: #e4e7e2;
+  --lynx-border: #d1d6cf;
+  --lynx-control-border: #858b84;
+  --lynx-ink: #171b17;
+  --lynx-body: #464c46;
+  --lynx-muted: #616760;
+  --lynx-action: #227847;
+  --lynx-action-hover: #155e3b;
+  --lynx-on-action: #fdfefc;
+  --lynx-link: #155e3b;
+  --lynx-selected: #e7f7d0;
+  --lynx-selection: #d2efab;
+  --lynx-code-bg: #f1f3ef;
+  --lynx-code-text: #171b17;
+  --lynx-code-comment: #616760;
+  --lynx-code-keyword: #155e3b;
+  --lynx-code-function: #026a9d;
+  --lynx-code-string: #925b0c;
+  --lynx-code-number: #943b84;
+  --lynx-code-error: #ab331f;
+  --lynx-info: #026a9d;
+  --lynx-info-bg: #e0f1ff;
+  --lynx-warning: #925b0c;
+  --lynx-warning-bg: #fef2cc;
+  --lynx-danger-bg: #ffe9e4;
+  --lynx-max-width: 80rem;
+  --lynx-gutter: clamp(1rem, 3.75vw, 3rem);
+  --lynx-radius-sm: 4px;
+  --lynx-radius-md: 6px;
+  --lynx-radius-lg: 8px;
+  --lynx-pill: 999px;
+  --lynx-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+html[data-theme='dark'] {
+  --lynx-ground: #0f1210;
+  --lynx-surface: #171b17;
+  --lynx-well: #262b27;
+  --lynx-border: #333833;
+  --lynx-control-border: #727a72;
+  --lynx-ink: #f1f3ef;
+  --lynx-body: #d1d6cf;
+  --lynx-muted: #aab0a8;
+  --lynx-action: #b7f652;
+  --lynx-action-hover: #ccfc76;
+  --lynx-on-action: #0f1210;
+  --lynx-link: #b5e280;
+  --lynx-selected: #0a2b1c;
+  --lynx-selection: #345c3e;
+  --lynx-code-bg: #121512;
+  --lynx-code-text: #e4e7e2;
+  --lynx-code-comment: #aab0a8;
+  --lynx-code-keyword: #b5e280;
+  --lynx-code-function: #8dccf9;
+  --lynx-code-string: #fbd26b;
+  --lynx-code-number: #edacde;
+  --lynx-code-error: #feac9b;
+  --lynx-info: #8dccf9;
+  --lynx-info-bg: #01314c;
+  --lynx-warning: #fbd26b;
+  --lynx-warning-bg: #46290b;
+  --lynx-danger-bg: #4e1b12;
+}

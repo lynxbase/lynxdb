@@ -157,7 +157,10 @@ can run and how to recognize a successful result. Link to the CLI, API, or
 PPL reference for flags and options. Give each page a descriptive title and
 summary in its front matter. The build uses them in search metadata and
 `llms.txt`. It also writes `robots.txt`, `sitemap.xml`, and Markdown copies
-of the published pages into `docs/site/build`.
+of the published pages into `docs/site/build`. The Worker serves Markdown
+at the canonical page URL when a client sends `Accept: text/markdown`.
+The build also publishes `/openapi.json` and `/openapi.yaml` from
+`docs/site/static/api/swagger.yaml`.
 
 The PPL command, function, and aggregation references come from the catalogs
 in `pkg/ppl`. Run `mise run gen` after editing the catalogs.
@@ -178,7 +181,8 @@ or set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` for the deployment.
 ```bash
 mise run docs
 cd docs/site
-mise x node@26.12.1 -- npx --yes cf@1.0.0-rc.6 deploy ./build --mode preview
+mise x node@26.12.1 -- node worker/build.mjs preview
+mise x node@26.12.1 -- npx --yes cf@1.0.0-rc.6 deploy --prebuilt --mode preview
 ```
 
 Production uses the `docs.lynxdb.org/*` Worker route. Keep the proxied

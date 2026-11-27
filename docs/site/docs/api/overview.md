@@ -172,7 +172,8 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `POST` | `/auth/rotate-root` | Rotate the root key | [Server](./server.md#api-keys) |
 | `GET` | `/debug/pprof/...` | Go runtime profiles | [Server](./server.md#profiling) |
 
-The OpenAPI description of these endpoints is at [`/api/swagger.yaml`](pathname:///api/swagger.yaml).
+Download the OpenAPI description of these endpoints as
+[JSON](pathname:///openapi.json) or [YAML](pathname:///openapi.yaml).
 
 ## Related
 
