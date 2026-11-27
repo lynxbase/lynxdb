@@ -2,6 +2,8 @@ import type {PrismTheme} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+const blogUrl = 'https://lynxdb.org/blog/';
+
 const codeTheme: PrismTheme = {
   plain: {
     color: 'var(--lynx-code-text)',
@@ -64,15 +66,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
         },
-        blog: {
-          blogTitle: 'LynxDB Blog',
-          blogDescription: 'LynxDB releases, storage and query engine updates, and log analytics benchmarks.',
-          showReadingTime: true,
-          editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
-          onInlineTags: 'warn',
-          onInlineAuthors: 'warn',
-          onUntruncatedBlogPosts: 'warn',
-        },
+        blog: false,
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -83,9 +77,6 @@ const config: Config = {
           ignorePatterns: [
             '/404',
             '/search/',
-            '/blog/archive/',
-            '/blog/authors/**',
-            '/blog/tags/**',
             '/docs/tags/**',
           ],
         },
@@ -99,6 +90,7 @@ const config: Config = {
       '@easyops-cn/docusaurus-search-local',
       {
         hashed: true,
+        indexBlog: false,
         language: ['en'],
         highlightSearchTermsOnTargetPage: true,
         explicitSearchResultPath: true,
@@ -134,7 +126,7 @@ const config: Config = {
           label: 'API',
           position: 'left',
         },
-        {to: '/blog', label: 'Blog', position: 'left'},
+        {href: blogUrl, label: 'Blog', position: 'left'},
         {
           href: 'https://lynxdb.org/',
           label: 'Website',
@@ -202,7 +194,7 @@ const config: Config = {
             },
             {
               label: 'Blog',
-              to: '/blog',
+              href: blogUrl,
             },
             {
               label: 'Releases',

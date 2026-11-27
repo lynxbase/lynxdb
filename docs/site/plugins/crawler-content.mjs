@@ -117,7 +117,7 @@ function docIds(item) {
   return [];
 }
 
-function groupDocs(versions, blogPosts, pages) {
+function groupDocs(versions, pages) {
   const groups = new Map();
   for (const {docs, sidebars} of versions) {
     const byId = new Map(docs.map((doc) => [doc.id, doc]));
@@ -134,11 +134,7 @@ function groupDocs(versions, blogPosts, pages) {
       }
     }
   }
-  const posts = blogPosts.map(({permalink}) => pages.get(permalink)).filter(Boolean);
-  if (posts.length) {
-    groups.set('Blog', posts);
-  }
-  const otherDocs = [...pages.values()].filter((page) => !page.group && !posts.includes(page));
+  const otherDocs = [...pages.values()].filter((page) => !page.group);
   if (otherDocs.length) {
     groups.set('Other documentation', otherDocs);
   }
@@ -153,12 +149,10 @@ function indexEntry(page) {
 
 export default function crawlerContent() {
   let versions;
-  let blogPosts;
   return {
     name: 'lynxdb-crawler-content',
     allContentLoaded({allContent}) {
       versions = allContent['docusaurus-plugin-content-docs'].default.loadedVersions;
-      blogPosts = allContent['docusaurus-plugin-content-blog'].default.blogPosts.map(({metadata}) => metadata);
     },
     async postBuild({siteConfig, siteDir, outDir, routes, routesBuildMetadata}) {
       const canonicalPath = (pathname) => applyTrailingSlash(pathname, siteConfig);
@@ -175,6 +169,13 @@ export default function crawlerContent() {
         ...(pathname === '/' ? [] : [`${pathname.slice(0, -1)} ${pathname} 308`]),
         `${pathname}index.html ${pathname} 308`,
       ]);
+      // The project website hosts the blog and its RSS feed.
+      redirects.push(
+        '/blog https://lynxdb.org/blog/ 308',
+        '/blog/rss.xml https://lynxdb.org/blog/feed.xml 308',
+        '/blog/atom.xml https://lynxdb.org/blog/feed.xml 308',
+        '/blog/* https://lynxdb.org/blog/ 308',
+      );
       await writeFile(path.join(outDir, '_redirects'), `${[...new Set(redirects)].join('\n')}\n`);
       const headers = [
         '/*\n  Access-Control-Allow-Origin: *\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin',
@@ -191,7 +192,7 @@ export default function crawlerContent() {
 
       const pages = new Map();
       const bySource = new Map();
-      const documents = [...versions.flatMap(({docs}) => docs), ...blogPosts];
+      const documents = versions.flatMap(({docs}) => docs);
       for (const doc of documents) {
         const url = new URL(canonicalPath(doc.permalink), siteConfig.url);
         const file = path.join(siteDir, aliasedSitePathToRelativePath(doc.source));
@@ -207,7 +208,7 @@ export default function crawlerContent() {
         '# LynxDB',
         '> LynxDB is an open-source log analytics database. Run OpenSearch Piped Processing Language (PPL) queries on local files and standard input, or ingest and query logs on a persistent server.',
       ];
-      const groups = groupDocs(versions, blogPosts, pages);
+      const groups = groupDocs(versions, pages);
       const index = [...introduction];
       for (const [title, entries] of groups) {
         index.push(`## ${title}\n\n${entries.map(indexEntry).join('\n')}`);
