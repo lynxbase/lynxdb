@@ -263,6 +263,8 @@ kbd {
   border: 1px solid var(--lynx-border);
   border-radius: var(--lynx-radius-md);
   font-size: 0.9rem;
+  /* Use whole words when the browser sizes prose columns. */
+  overflow-wrap: break-word;
 }
 
 .markdown table :is(th, td) {
@@ -281,7 +283,7 @@ kbd {
 }
 
 .markdown table code {
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
 }
 
 .markdown :not(pre) > code {
@@ -431,6 +433,12 @@ kbd {
   .markdown .tabs__item {
     min-height: 2.75rem;
     align-content: center;
+  }
+}
+
+@media (max-width: 40rem) {
+  .markdown table :is(th, td) {
+    padding-inline: 0.5rem;
   }
 }
 
