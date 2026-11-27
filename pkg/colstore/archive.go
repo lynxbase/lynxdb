@@ -277,6 +277,11 @@ func (s *Store) readPartitionArchive(ctx context.Context, src string) (int64, []
 		!slices.Equal(m.TimeFields, s.archiveTimeFields()) || m.PartDictionary != s.opts.Part.Dictionary {
 		return 0, nil, ErrIncompatibleArchive
 	}
+	// A retry of a successful import should report the conflict even when
+	// the index no longer has room for a second copy of the archive.
+	if s.hasPartition(m.ID) {
+		return 0, nil, ErrPartitionExists
+	}
 	var files []*PartFile
 	for i, info := range m.Parts {
 		pf, err := s.stageArchivePart(ctx, root, archivePartName(i), info, m.ID)

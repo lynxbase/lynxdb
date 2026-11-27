@@ -239,10 +239,7 @@ func (s *Store) AttachPartition(ctx context.Context, src string) (PartitionStats
 	if err := s.Sync(); err != nil {
 		return PartitionStats{}, err
 	}
-	snap := s.Table().Snapshot()
-	exists := slices.ContainsFunc(snap.Parts(), func(h *Handle) bool { return h.Partition == id })
-	snap.Release()
-	if exists {
+	if s.hasPartition(id) {
 		return PartitionStats{}, ErrPartitionExists
 	}
 	if err := ctx.Err(); err != nil {
@@ -265,4 +262,10 @@ func (s *Store) AttachPartition(ctx context.Context, src string) (PartitionStats
 	s.noteArrival(add)
 	s.countRuns()
 	return st, nil
+}
+
+func (s *Store) hasPartition(id int64) bool {
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	return slices.ContainsFunc(snap.Parts(), func(h *Handle) bool { return h.Partition == id })
 }
