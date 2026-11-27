@@ -42,7 +42,7 @@ const (
 // in, cut into parts of disjoint key ranges that are written side by side,
 // and returns the files, which the caller commits. It sorts the batches; a
 // part merges the sorted rows of several by key.
-func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
+func (s *Store) writeRuns(batches []*shred.Batch, sorted chan struct{}) ([]*PartFile, error) {
 	buckets := make([][]shred.TimeBucket, len(batches))
 	// Each of the flushes that write at once sorts and writes on half of
 	// the CPUs, which bounds the buffers of sorting and encoding they hold.
@@ -57,6 +57,7 @@ func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 		b.SortBy(s.opts.SortKey)
 		buckets[i] = []shred.TimeBucket{{Rows: b.Rows}}
 	})
+	close(sorted)
 	segments := map[int64][]segment{}
 	var partitions []int64
 	for i, b := range batches {

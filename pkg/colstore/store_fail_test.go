@@ -1,11 +1,13 @@
 package colstore
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,6 +103,15 @@ func TestFlushThatFailsKeepsItsRowsForTheNextTry(t *testing.T) {
 			for try := 0; try < 2; try++ {
 				if err := s.Sync(); err == nil {
 					t.Fatal("a Sync that could not be written returned no error")
+				}
+				snap, err := s.ReadSnapshot(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, sum, _ := sumN(t, snap, ScanOptions{})
+				snap.Release()
+				if rows != 900 || sum != 899*900/2 {
+					t.Fatalf("visible after failed flush: %d rows, sum %d", rows, sum)
 				}
 				if rows, sum := rowsAndSumOf(t, s.Table()); rows != 300 || sum != 299*300/2 {
 					t.Fatalf("after a failed flush: %d rows, sum %d", rows, sum)
@@ -357,4 +368,67 @@ func TestAppendTakesNoLinesWhileAFullBufferCannotBeWritten(t *testing.T) {
 	if len(again) != len(counts)+requests*lines {
 		t.Fatalf("%d documents, want %d", len(again), len(counts)+requests*lines)
 	}
+}
+
+func TestReadSnapshotDuringFlush(t *testing.T) {
+	s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", Partition: time.Hour, BlockRows: 32, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	appendRows := func(first, n int) {
+		t.Helper()
+		if _, err := s.Append(runDocs(first, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pin := func() *Snapshot {
+		t.Helper()
+		snap, err := s.ReadSnapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(snap.Release)
+		return snap
+	}
+	check := func(snap *Snapshot, n int64) {
+		t.Helper()
+		if rows, sum, _ := sumN(t, snap, ScanOptions{}); rows != n || sum != n*(n-1)/2 {
+			t.Fatalf("snapshot: %d rows, sum %d, want first %d rows", rows, sum, n)
+		}
+	}
+	appendRows(0, 40)
+	before := pin()
+	blocked, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release := sync.OnceFunc(func() { close(resume) })
+	defer release()
+	replaceSyncFile(t, func(f *os.File) error {
+		if isPartFile(f.Name()) {
+			once.Do(func() { close(blocked); <-resume })
+		}
+		return nil
+	})
+	wrote := make(chan error, 1)
+	go func() { wrote <- s.Sync() }()
+	<-blocked
+	appendRows(40, 30)
+	during := pin()
+	check(during, 70)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.ReadSnapshot(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled snapshot: %v", err)
+	}
+	release()
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	appendRows(70, 20)
+	if err := s.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	check(before, 40)
+	check(during, 70)
+	check(pin(), 90)
 }
