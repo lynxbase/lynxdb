@@ -42,27 +42,31 @@ func (r *EventRange) addTimes(times []int64) {
 
 // StatsSnapshot pins the disk parts and counts the rows that have yet to reach them.
 func (s *Store) StatsSnapshot() (*Snapshot, EventRange) {
+	if disk := s.committedSnapshot(); disk != nil {
+		return disk, EventRange{}
+	}
 	s.takeMu.Lock()
 	defer s.takeMu.Unlock()
 	var events EventRange
 	for _, rec := range s.reading {
 		events.add(rec.events)
 	}
-	s.lockShards()
+	disk := s.pinShards()
 	for i := range s.shards {
 		sh := &s.shards[i]
 		events.add(sh.events)
 		sh.mu.Unlock()
 	}
-	return s.Table().Snapshot(), events
+	return disk, events
 }
 
-// lockShards fixes one append boundary across shards. The caller holds takeMu
-// and releases each shard once its rows have been captured.
-func (s *Store) lockShards() {
+// pinShards pins the disk version while all append shards are stable. The
+// caller holds takeMu and unlocks each shard once its rows have been captured.
+func (s *Store) pinShards() *Snapshot {
 	for i := range s.shards {
 		s.shards[i].mu.Lock()
 	}
+	return s.Table().Snapshot()
 }
 
 // readBlock owns a copy of the rows. Concurrent readers share its encoding,
@@ -133,13 +137,25 @@ func (s *Store) forgetFlush(rec *flushRecord) {
 	rec.batches, rec.view = nil, nil
 }
 
+// committedSnapshot returns a disk snapshot if it covers all appends at
+// the instant it was pinned. An append racing the pin takes the slow path.
+func (s *Store) committedSnapshot() *Snapshot {
+	written := s.written.Load()
+	disk := s.Table().Snapshot()
+	if written == s.appended.Load() {
+		return disk
+	}
+	disk.Release()
+	return nil
+}
+
 // ReadSnapshot pins the acknowledged rows of the store across flushes and merges.
 func (s *Store) ReadSnapshot(ctx context.Context) (*Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.written.Load() == s.appended.Load() {
-		return s.Table().Snapshot(), nil
+	if disk := s.committedSnapshot(); disk != nil {
+		return disk, nil
 	}
 	disk, blocks, err := s.pinBuffers(ctx)
 	if err != nil {
@@ -181,7 +197,7 @@ func (s *Store) pinBuffers(ctx context.Context) (*Snapshot, []readBlock, error) 
 		}
 		blocks = append(blocks, rec.view...)
 	}
-	s.lockShards()
+	disk := s.pinShards()
 	for i := range s.shards {
 		sh := &s.shards[i]
 		if sh.batch != nil {
@@ -191,5 +207,5 @@ func (s *Store) pinBuffers(ctx context.Context) (*Snapshot, []readBlock, error) 
 		}
 		sh.mu.Unlock()
 	}
-	return s.Table().Snapshot(), blocks, nil
+	return disk, blocks, nil
 }
