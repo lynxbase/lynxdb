@@ -105,6 +105,14 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 
 		return out, nil
 	}
+	// A row sort breaks ties by input position. Read its source in snapshot
+	// order when the sort could not run in the columnar executor.
+	for at := root; len(at.Inputs()) == 1; at = at.Inputs()[0] {
+		switch at.(type) {
+		case *ir.Sort, *ir.TopN:
+			r.opts.Workers = 1
+		}
+	}
 	iter, err := physical.Build(&ir.Plan{Root: root}, physical.Options{
 		Source:    r.source,
 		Describe:  r.describe,

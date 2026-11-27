@@ -353,7 +353,14 @@ func sortLimitToTopN(n ir.Node, _ *Options) (ir.Node, bool) {
 	if !ok {
 		return n, false
 	}
-	return &ir.TopN{Input: s.Input, Keys: s.Keys, Count: l.Count, Offset: l.Offset}, true
+	if l.Count == 0 {
+		return &ir.Limit{Input: s.Input}, true
+	}
+	top := &ir.TopN{Input: s.Input, Keys: s.Keys, Count: l.Count + l.Offset}
+	if l.Offset > 0 {
+		return &ir.Limit{Input: top, Count: l.Count, Offset: l.Offset}, true
+	}
+	return top, true
 }
 
 // limitIntoScan tells a scan how many rows the operators above it read

@@ -3,6 +3,7 @@ package columnar
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/ir"
 )
@@ -11,6 +12,9 @@ import (
 // result after its request times out, accept returns false and execution
 // continues against the same pinned sources.
 func (db *DB) QueryPage(ctx context.Context, plan *ir.Plan, opts Options, bound int, accept func() bool) (*Result, error) {
+	if opts.Now.IsZero() {
+		opts.Now = time.Now()
+	}
 	page, capRows := pagePlan(plan, bound)
 	if page == nil {
 		return db.Query(ctx, plan, opts)

@@ -220,7 +220,7 @@ func (t *translator) node(n ir.Node) error {
 	case *ir.Sort:
 		return t.order(n.Keys, 0)
 	case *ir.TopN:
-		if n.Offset != 0 {
+		if n.Count <= 0 || n.Offset != 0 {
 			return unsupported("%s", n.Label())
 		}
 

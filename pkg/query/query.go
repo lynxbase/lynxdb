@@ -73,7 +73,7 @@ func compile(src string, opts Options) (*Compiled, error) {
 	if err != nil {
 		return nil, err
 	}
-	logical := &ir.Plan{Root: eventOrder(res.Plan.Root, true)}
+	logical := &ir.Plan{Root: eventOrder(ir.Transform(res.Plan.Root, orderSubqueries), true)}
 	plan, applied := opt.Optimize(logical, opt.Options{Fold: Fold})
 	if err := ir.Validate(plan); err != nil {
 		return nil, fmt.Errorf("optimizer produced an invalid plan: %w", err)

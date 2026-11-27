@@ -6,6 +6,20 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
+// orderSubqueries gives a head inside a scalar or membership subquery its
+// event order. The enclosing expression consumes values independently of order.
+func orderSubqueries(n ir.Node) ir.Node {
+	return ir.RewriteNodeExprs(n, func(e ir.Expr) ir.Expr {
+		s, ok := e.(*ir.Subquery)
+		if !ok {
+			return e
+		}
+		c := *s
+		c.Plan = eventOrder(ir.Transform(s.Plan, orderSubqueries), false)
+		return &c
+	})
+}
+
 // eventOrder supplies the input order of an event search and of a head
 // within a larger query. A sort, aggregation or combining command owns
 // its output order. Projections can remove or replace _time, so order the
