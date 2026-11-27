@@ -512,6 +512,11 @@ func (s *Server) shutdown() {
 	defer cancel()
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("HTTP server shutdown error", "error", err)
+		// A partition transfer can still hold its store open. Closing the
+		// connections cancels those requests before we wait for the stores.
+		if err := s.httpServer.Close(); err != nil {
+			s.logger.Error("HTTP server close error", "error", err)
+		}
 	}
 	s.promMetrics.SetListenerUp("es", false)
 	s.closeDB()
