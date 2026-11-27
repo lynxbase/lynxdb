@@ -1,5 +1,5 @@
 ---
-title: Expressions
+title: PPL expressions and operators
 sidebar_label: Expressions
 description: Operators, comparisons, NULL handling, conditional expressions and subqueries in PPL.
 ---

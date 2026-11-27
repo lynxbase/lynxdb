@@ -1,5 +1,5 @@
 ---
-title: Search semantics
+title: PPL search semantics
 sidebar_label: Search semantics
 description: How PPL search expressions match events and use LynxDB's indexes.
 ---

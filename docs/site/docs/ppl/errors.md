@@ -1,5 +1,5 @@
 ---
-title: Error handling
+title: PPL errors and troubleshooting
 sidebar_label: Error handling
 description: PPL error kinds, their positions and hints, and the REST error codes they map to.
 ---

@@ -1,6 +1,7 @@
 ---
 sidebar_position: 6
-title: server
+title: lynxdb server
+sidebar_label: server
 description: Start the LynxDB server - flags, data directory, TLS, authentication, receivers, signals and systemd.
 ---
 

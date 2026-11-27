@@ -1,5 +1,5 @@
 ---
-title: Performance considerations
+title: PPL query performance
 sidebar_label: Performance
 description: Which parts of a PPL query let LynxDB read less data, and how to write fast queries.
 ---

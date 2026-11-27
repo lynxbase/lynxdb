@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
-title: Installation
+title: Install LynxDB
+sidebar_label: Installation
 description: Install LynxDB on Linux, macOS, Windows, or Docker.
 ---
 

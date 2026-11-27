@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
-title: Query
+title: REST API PPL queries, jobs and streaming
+sidebar_label: Query
 description: Run PPL queries over HTTP - sync, async and hybrid modes, the result envelope, error codes, explain, the PPL catalog, jobs and NDJSON streaming.
 ---
 

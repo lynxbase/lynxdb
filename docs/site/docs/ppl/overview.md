@@ -1,5 +1,5 @@
 ---
-title: PPL overview
+title: OpenSearch PPL in LynxDB
 sidebar_label: Overview
 description: LynxDB's query language is OpenSearch Piped Processing Language, compiled to a language-independent IR.
 ---

@@ -1,5 +1,6 @@
 ---
-title: login, logout & auth
+title: lynxdb login, logout and auth
+sidebar_label: login, logout & auth
 description: Save credentials for a LynxDB server and manage its API keys.
 ---
 

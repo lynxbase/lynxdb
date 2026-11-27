@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
-title: Quick start
+title: LynxDB quick start
+sidebar_label: Quick start
 description: Count HTTP errors in a local file, then run the same PPL query against a LynxDB server.
 ---
 

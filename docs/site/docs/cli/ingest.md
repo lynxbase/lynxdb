@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
-title: ingest
+title: lynxdb ingest
+sidebar_label: ingest
 description: Send log lines, NDJSON, CSV and Elasticsearch bulk files to a LynxDB server.
 ---
 

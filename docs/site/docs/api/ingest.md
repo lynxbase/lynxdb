@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
-title: Ingest
+title: REST API log ingestion and indexes
+sidebar_label: Ingest
 description: NDJSON event ingest, raw log text ingest, and the calls that create, describe and list indexes.
 ---
 

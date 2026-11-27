@@ -8,6 +8,7 @@ const config: Config = {
   favicon: 'img/favicon.ico',
   url: 'https://docs.lynxdb.org',
   baseUrl: '/',
+  trailingSlash: true,
   organizationName: 'lynxbase',
   projectName: 'lynxdb',
   onBrokenLinks: 'throw',
@@ -36,6 +37,8 @@ const config: Config = {
           editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
         },
         blog: {
+          blogTitle: 'LynxDB Blog',
+          blogDescription: 'LynxDB releases, storage and query engine updates, and log analytics benchmarks.',
           showReadingTime: true,
           editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
           onInlineTags: 'warn',
@@ -45,13 +48,27 @@ const config: Config = {
         theme: {
           customCss: './src/css/custom.css',
         },
+        sitemap: {
+          lastmod: 'date',
+          changefreq: null,
+          priority: null,
+          ignorePatterns: [
+            '/404',
+            '/search/',
+            '/blog/archive/',
+            '/blog/authors/**',
+            '/blog/tags/**',
+            '/docs/tags/**',
+          ],
+        },
       } satisfies Preset.Options,
     ],
   ],
 
   plugins: [
+    './plugins/crawler-content.mjs',
     [
-      require.resolve('@easyops-cn/docusaurus-search-local'),
+      '@easyops-cn/docusaurus-search-local',
       {
         hashed: true,
         language: ['en'],
@@ -63,6 +80,7 @@ const config: Config = {
 
   themeConfig: {
     image: 'img/lynxdb-icon.png',
+    metadata: [{property: 'og:site_name', content: 'LynxDB'}],
     colorMode: {
       defaultMode: 'light',
       respectPrefersColorScheme: true,

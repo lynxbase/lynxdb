@@ -1,5 +1,5 @@
 ---
-title: Joins and subsearches
+title: PPL joins and subsearches
 sidebar_label: Joins and subsearches
 description: join, lookup, append, union, multisearch and subqueries in PPL.
 ---

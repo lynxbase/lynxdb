@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
-title: explain
+title: lynxdb explain
+sidebar_label: explain
 description: Show how the server compiles and plans a PPL query, with optional execution profile.
 ---
 

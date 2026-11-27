@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
-title: API Overview
+title: LynxDB REST API reference
+sidebar_label: API Overview
 description: LynxDB HTTP API base paths, authentication and scopes, response and error envelopes, common headers, size limits and the full endpoint map.
 ---
 

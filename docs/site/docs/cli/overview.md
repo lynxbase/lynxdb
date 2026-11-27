@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
-title: CLI Overview
+title: LynxDB command-line reference
+sidebar_label: CLI Overview
 description: How the lynxdb binary runs queries, global flags, connection settings, the command map and exit codes.
 ---
 

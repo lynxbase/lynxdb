@@ -1,5 +1,7 @@
 import type {ReactNode} from 'react';
+import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 import Layout from '@theme/Layout';
@@ -36,10 +38,22 @@ const sections = [
 ];
 
 export default function Home(): ReactNode {
+  const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
       title="Log analytics database"
       description="Query log files and standard input with OpenSearch PPL, or run a LynxDB server that stores logs on disk.">
+      <Head>
+        <script type="application/ld+json">
+          {JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'WebSite',
+            name: 'LynxDB',
+            url: new URL(siteConfig.baseUrl, siteConfig.url).href,
+            inLanguage: 'en',
+          })}
+        </script>
+      </Head>
       <main>
         <header className={styles.hero}>
           <div className={styles.heroGrid}>

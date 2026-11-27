@@ -1,5 +1,5 @@
 ---
-title: Supported features
+title: OpenSearch PPL compatibility in LynxDB
 sidebar_label: Feature matrix
 description: Which OpenSearch PPL commands, functions and options LynxDB supports, with its deviations.
 ---

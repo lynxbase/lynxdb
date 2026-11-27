@@ -1,5 +1,5 @@
 ---
-title: Command guide
+title: PPL command guide
 sidebar_label: Command guide
 description: How to use the main PPL commands in LynxDB, with LynxDB-specific behavior.
 ---
