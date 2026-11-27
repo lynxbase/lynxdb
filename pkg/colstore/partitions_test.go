@@ -14,10 +14,11 @@ import (
 
 func TestPartitionChangesKeepReadersAndBufferedAppends(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
+	dest := filepath.Join(t.TempDir(), "archive")
 	var unblock sync.Once
 	unpause := func() { unblock.Do(func() { close(release) }) }
 	replaceSyncFile(t, func(f *os.File) error {
-		if filepath.Base(f.Name()) == archiveManifest+tmpSuffix {
+		if filepath.Base(f.Name()) == archivePartName(0) {
 			close(entered)
 			<-release
 		}
@@ -48,38 +49,51 @@ func TestPartitionChangesKeepReadersAndBufferedAppends(t *testing.T) {
 			pinned = append(pinned, s.dir.live[h].name)
 		}
 	}
-	dest := filepath.Join(t.TempDir(), "archive")
-	result := make(chan error, 1)
+	type detachResult struct {
+		stats PartitionStats
+		err   error
+	}
+	result := make(chan detachResult, 1)
 	go func() {
 		st, err := s.DetachPartition(ctx, start, dest)
-		if err == nil && st != list[0] {
-			t.Errorf("detach returned %+v, want %+v", st, list[0])
-		}
-		result <- err
+		result <- detachResult{st, err}
 	}()
 	select {
 	case <-entered:
-	case err := <-result:
-		t.Fatalf("detach failed before writing archive: %v", err)
+	case res := <-result:
+		t.Fatalf("detach finished before writing archive: %v", res.err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("detach did not start writing")
 	}
-	// Read through the normal snapshot entry point while the archive waits
-	// for durability. An append crossing this boundary starts a new span.
-	if rows, _ := rowsAndSumOf(t, s.Table()); rows != 20 {
-		t.Fatalf("query during detach read %d events", rows)
-	}
+
+	// One append adds a row to the span being copied and one to its
+	// neighbor. Both must be searchable while the archive write is held.
 	appended := make(chan error, 1)
 	go func() {
-		_, err := s.Append(timedDocs(100, 1, 1))
+		_, err := s.Append(timedDocs(100, 2, 2))
+		if err == nil {
+			err = s.Sync()
+		}
 		appended <- err
 	}()
-	unpause()
-	if err := <-result; err != nil {
-		t.Fatal(err)
+	select {
+	case err := <-appended:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ingest waited for the initial archive copy")
 	}
-	if err := <-appended; err != nil {
-		t.Fatal(err)
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 22 || sum != 391 {
+		t.Fatalf("query during detach read %d events, sum %d", rows, sum)
+	}
+	list, err = s.ListPartitions(ctx)
+	if err != nil || list[0].Events != 11 {
+		t.Fatalf("partitions before publication = %+v, %v", list, err)
+	}
+	unpause()
+	if res := <-result; res.err != nil || res.stats != list[0] {
+		t.Fatalf("detach = %+v, %v, want %+v", res.stats, res.err, list[0])
 	}
 	for _, name := range pinned {
 		if _, err := os.Stat(filepath.Join(path, name)); err != nil {
@@ -95,6 +109,9 @@ func TestPartitionChangesKeepReadersAndBufferedAppends(t *testing.T) {
 			t.Fatalf("released part %s: %v", name, err)
 		}
 	}
+	if _, err := s.Append(timedDocs(200, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.AttachPartition(ctx, dest); !errors.Is(err, ErrPartitionExists) {
 		t.Fatalf("attach over buffered late append: %v", err)
 	}
@@ -109,7 +126,7 @@ func TestPartitionChangesKeepReadersAndBufferedAppends(t *testing.T) {
 	if st, err := s.AttachPartition(ctx, dest); err != nil || st != list[0] {
 		t.Fatalf("attach = %+v, %v", st, err)
 	}
-	if rows, _, _ := sumN(t, before, ScanOptions{}); rows != 10 {
+	if rows, _, _ := sumN(t, before, ScanOptions{}); rows != 11 {
 		t.Fatalf("reader acquired before attach saw %d rows", rows)
 	}
 	if err := s.Close(); err != nil {
@@ -120,10 +137,10 @@ func TestPartitionChangesKeepReadersAndBufferedAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 20 || sum != 190 {
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 22 || sum != 391 {
 		t.Fatalf("reopened index: %d events, sum %d", rows, sum)
 	}
-	if n, err := s.DropBefore(start.Add(time.Hour).UnixNano()); err != nil || n != 10 {
+	if n, err := s.DropBefore(start.Add(time.Hour).UnixNano()); err != nil || n != 11 {
 		t.Fatalf("retention of attached span: %d events, %v", n, err)
 	}
 }

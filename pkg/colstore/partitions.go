@@ -123,10 +123,12 @@ func (s *Store) removePartition(ctx context.Context, start time.Time, dest *stri
 	if !st.Start.Equal(start) {
 		return PartitionStats{}, fmt.Errorf("%w: %s is not a partition start", ErrInvalidPartition, start.Format(time.RFC3339Nano))
 	}
-	// Every accepted append preceding the removal belongs to the export
-	// or drop. An append that races it can start a new partition afterward.
-	s.appending.Lock()
-	defer s.appending.Unlock()
+	// Drop fences appends through publication. Detach takes this fence
+	// only after copying the initial parts, to include any late arrivals.
+	if dest == nil {
+		s.appending.Lock()
+		defer s.appending.Unlock()
+	}
 	if err := s.Sync(); err != nil {
 		return PartitionStats{}, err
 	}
@@ -135,27 +137,73 @@ func (s *Store) removePartition(ctx context.Context, start time.Time, dest *stri
 	if err := ctx.Err(); err != nil {
 		return PartitionStats{}, err
 	}
-	snap := s.Table().Snapshot()
-	var old []*Handle
-	for _, h := range snap.Parts() {
-		if h.Partition == id {
-			old = append(old, h)
-			st.add(h)
-		}
-	}
-	if len(old) == 0 {
-		snap.Release()
+	first := s.partitionSnapshot(id)
+	defer first.Release()
+	if len(first.Parts()) == 0 {
 		return PartitionStats{}, ErrPartitionNotFound
 	}
-	// Pin only this partition while copying. Merges in other partitions
-	// can reclaim the space from their input parts as usual.
-	pinned := keep(old)
-	snap.Release()
-	defer pinned.Release()
-	if dest != nil {
-		if err := s.writePartitionArchive(ctx, *dest, id, old); err != nil {
-			return PartitionStats{}, err
+	if dest == nil {
+		return s.dropParts(id, first.Parts())
+	}
+	return s.detachParts(ctx, id, *dest, first)
+}
+
+// partitionSnapshot pins only the requested partition, so that merges in
+// other partitions can reclaim their inputs throughout an archive copy.
+func (s *Store) partitionSnapshot(id int64) *Snapshot {
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	var parts []*Handle
+	for _, h := range snap.Parts() {
+		if h.Partition == id {
+			parts = append(parts, h)
 		}
+	}
+	return keep(parts)
+}
+
+// detachParts runs with merges paused for id. Its set of parts can only
+// grow, even if other partitions are being flushed and merged.
+func (s *Store) detachParts(ctx context.Context, id int64, dest string, first *Snapshot) (PartitionStats, error) {
+	w, err := s.beginPartitionArchive(dest, id)
+	if err != nil {
+		return PartitionStats{}, err
+	}
+	defer w.close()
+	if err := w.add(ctx, first.Parts()); err != nil {
+		return PartitionStats{}, err
+	}
+	copied := make(map[*Handle]struct{}, len(first.Parts()))
+	for _, h := range first.Parts() {
+		copied[h] = struct{}{}
+	}
+
+	s.appending.Lock()
+	defer s.appending.Unlock()
+	if err := s.Sync(); err != nil {
+		return PartitionStats{}, err
+	}
+	final := s.partitionSnapshot(id)
+	defer final.Release()
+	var arrivals []*Handle
+	for _, h := range final.Parts() {
+		if _, ok := copied[h]; !ok {
+			arrivals = append(arrivals, h)
+		}
+	}
+	if err := w.add(ctx, arrivals); err != nil {
+		return PartitionStats{}, err
+	}
+	if err := w.publish(ctx); err != nil {
+		return PartitionStats{}, err
+	}
+	return s.dropParts(id, final.Parts())
+}
+
+func (s *Store) dropParts(id int64, old []*Handle) (PartitionStats, error) {
+	st := s.span(id)
+	for _, h := range old {
+		st.add(h)
 	}
 	if _, err := s.dir.Commit(nil, old); err != nil {
 		return PartitionStats{}, err

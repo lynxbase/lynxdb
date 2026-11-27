@@ -102,60 +102,72 @@ func (s *Store) archivePath(path string) (string, error) {
 	}
 }
 
-// writePartitionArchive publishes a complete directory before the caller
-// removes the handles. A crash between these commits leaves both copies.
-func (s *Store) writePartitionArchive(ctx context.Context, dest string, id int64, handles []*Handle) error {
+// archiveWriter reserves a destination and copies the parts of a partition
+// as they are captured. Its manifest is published only after the final batch.
+type archiveWriter struct {
+	dir       *Dir
+	root      *os.Root
+	manifest  partitionArchive
+	written   int
+	published bool
+}
+
+func (s *Store) beginPartitionArchive(dest string, id int64) (*archiveWriter, error) {
 	dest, err := s.archivePath(dest)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.Mkdir(dest, 0o700); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("%w: %s", ErrArchiveExists, dest)
+			return nil, fmt.Errorf("%w: %s", ErrArchiveExists, dest)
 		}
-		return err
+		return nil, err
 	}
 	root, err := os.OpenRoot(dest)
 	if err != nil {
 		os.Remove(dest)
-		return err
+		return nil, err
 	}
-	// The final manifest is the commit marker. An interrupted export
-	// can leave an incomplete directory but the source is still live.
-	tmp := archiveManifest + tmpSuffix
-	written := 0
-	published := false
-	defer func() {
-		if published {
-			root.Close()
-			return
-		}
-		_ = root.Remove(tmp)
-		for i := range written {
-			_ = root.Remove(archivePartName(i))
-		}
-		root.Close()
-		os.Remove(dest)
-	}()
+	return &archiveWriter{
+		dir: s.dir, root: root,
+		manifest: partitionArchive{
+			Version: 1, ID: id, Width: s.opts.Partition, SortKey: s.opts.SortKey,
+			TimeFields: s.archiveTimeFields(), PartDictionary: s.opts.Part.Dictionary,
+		},
+	}, nil
+}
 
-	m := partitionArchive{
-		Version: 1, ID: id, Width: s.opts.Partition, SortKey: s.opts.SortKey,
-		TimeFields: s.archiveTimeFields(), PartDictionary: s.opts.Part.Dictionary,
+// close discards an incomplete export. An interruption after publication
+// but before the caller drops the partition leaves both copies.
+func (w *archiveWriter) close() {
+	if w.published {
+		w.root.Close()
+		return
 	}
-	for i, h := range handles {
-		s.dir.mu.Lock()
-		ref := s.dir.live[h]
-		s.dir.mu.Unlock()
+	_ = w.root.Remove(archiveManifest + tmpSuffix)
+	for i := range w.written {
+		_ = w.root.Remove(archivePartName(i))
+	}
+	dest := w.root.Name()
+	w.root.Close()
+	os.Remove(dest)
+}
+
+// add requires a pinned snapshot containing the handles. New writes can
+// continue alongside the copy until the caller captures the final batch.
+func (w *archiveWriter) add(ctx context.Context, handles []*Handle) error {
+	for _, h := range handles {
+		w.dir.mu.Lock()
+		ref := w.dir.live[h]
+		w.dir.mu.Unlock()
 		if ref == nil {
 			return ErrUnknownPart
 		}
-		f, err := root.OpenFile(archivePartName(i), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		f, err := w.root.OpenFile(archivePartName(w.written), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return err
 		}
-		written++
-		// The caller pins the handles, and therefore these mappings,
-		// until the entire archive has been committed.
+		w.written++
 		info, err := copyArchivePart(ctx, f, bytes.NewReader(ref.data))
 		if err == nil {
 			err = syncFile(f)
@@ -163,13 +175,18 @@ func (s *Store) writePartitionArchive(ctx context.Context, dest string, id int64
 		if err = errors.Join(err, f.Close()); err != nil {
 			return err
 		}
-		m.Parts = append(m.Parts, info)
+		w.manifest.Parts = append(w.manifest.Parts, info)
 	}
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return ctx.Err()
+}
+
+func (w *archiveWriter) publish(ctx context.Context) error {
+	tmp := archiveManifest + tmpSuffix
+	f, err := w.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	if err = json.NewEncoder(f).Encode(&m); err == nil {
+	if err = json.NewEncoder(f).Encode(&w.manifest); err == nil {
 		err = checkManifestSize(f)
 	}
 	if err == nil {
@@ -178,10 +195,11 @@ func (s *Store) writePartitionArchive(ctx context.Context, dest string, id int64
 	if err = errors.Join(err, f.Close(), ctx.Err()); err != nil {
 		return err
 	}
-	if err := root.Rename(tmp, archiveManifest); err != nil {
+	if err := w.root.Rename(tmp, archiveManifest); err != nil {
 		return err
 	}
-	published = true
+	w.published = true
+	dest := w.root.Name()
 	return errors.Join(syncDir(dest), syncDir(filepath.Dir(dest)))
 }
 

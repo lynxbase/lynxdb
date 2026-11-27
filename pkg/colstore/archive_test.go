@@ -40,16 +40,39 @@ func TestPartitionArchiveValidation(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "archive")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := source.writePartitionArchive(ctx, archive, -1, parts); !errors.Is(err, context.Canceled) {
+	start := func() *archiveWriter {
+		t.Helper()
+		w, err := source.beginPartitionArchive(archive, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	w := start()
+	if err := w.add(t.Context(), parts[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := dest.readPartitionArchive(t.Context(), archive); !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("attach before publication: %v", err)
+	}
+	if err := w.add(ctx, parts[1:]); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled detach: %v", err)
 	}
+	w.close()
 	if _, err := os.Stat(archive); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("incomplete archive remains: %v", err)
 	}
-	if err := source.writePartitionArchive(t.Context(), archive, -1, parts); err != nil {
+	w = start()
+	defer w.close()
+	for _, h := range parts {
+		if err := w.add(t.Context(), []*Handle{h}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.publish(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.writePartitionArchive(t.Context(), archive, -1, parts); !errors.Is(err, ErrArchiveExists) {
+	if _, err := source.beginPartitionArchive(archive, -1); !errors.Is(err, ErrArchiveExists) {
 		t.Fatalf("overwrite: %v", err)
 	}
 	settings := opts
