@@ -278,25 +278,28 @@ var globalHTTPClient *client.Client
 // Token resolution order: --token flag > LYNXDB_TOKEN env > credentials file > none.
 func apiClient() *client.Client {
 	if globalHTTPClient == nil {
-		token := resolveToken()
-		opts := []client.Option{
-			client.WithBaseURL(globalServer),
-			client.WithAuthToken(token),
-		}
+		globalHTTPClient = newAPIClient()
+	}
+	return globalHTTPClient
+}
 
-		if globalTLSSkipVerify {
-			opts = append(opts, client.WithInsecureSkipVerify())
-			fmt.Fprintln(os.Stderr, "Warning: TLS verification disabled. Connection is encrypted but not authenticated.")
-		} else if strings.HasPrefix(globalServer, "https://") {
-			if tc := buildTOFUTLSConfig(globalServer); tc != nil {
-				opts = append(opts, client.WithTLSConfig(tc))
-			}
-		}
-
-		globalHTTPClient = client.NewClient(opts...)
+func newAPIClient(options ...client.Option) *client.Client {
+	token := resolveToken()
+	opts := []client.Option{
+		client.WithBaseURL(globalServer),
+		client.WithAuthToken(token),
 	}
 
-	return globalHTTPClient
+	if globalTLSSkipVerify {
+		opts = append(opts, client.WithInsecureSkipVerify())
+		fmt.Fprintln(os.Stderr, "Warning: TLS verification disabled. Connection is encrypted but not authenticated.")
+	} else if strings.HasPrefix(globalServer, "https://") {
+		if tc := buildTOFUTLSConfig(globalServer); tc != nil {
+			opts = append(opts, client.WithTLSConfig(tc))
+		}
+	}
+
+	return client.NewClient(append(opts, options...)...)
 }
 
 // resolveToken determines the auth token using the precedence cascade:
