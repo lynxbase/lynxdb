@@ -119,6 +119,7 @@ A `.lynxdbrc` cannot set the server address: the file can come with any director
 | Load data | [`ingest`](./ingest.md) (`i`) |
 | Run the server | [`server`](./server.md) |
 | Inspect the server | [`status`](./status.md) (`st`), [`indexes`](./status.md#indexes), [`jobs`](./status.md#jobs) |
+| Manage partitions | [`partitions list`, `drop`, `detach`, `attach`](./status.md#partitions) |
 | Authentication | [`login`](./auth.md#login), [`logout`](./auth.md#logout), [`auth`](./auth.md) |
 | Configuration | [`config`](./config-cmd.md) |
 | Utilities | [`version`](./status.md#version), [`completion`](./completion.md) |

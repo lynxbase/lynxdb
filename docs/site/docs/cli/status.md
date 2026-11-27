@@ -7,7 +7,7 @@ description: Inspect a LynxDB server - status and health, indexes, query jobs, t
 
 # status, fields, jobs & more
 
-Short commands that read state from the server named by `--server`. With `--format json` or `ndjson`, and when stdout is not a terminal, `status` and a single field or job print one JSON object, and the lists (`indexes`, `fields`, `jobs`, `auth list`, `config list-profiles`) print one JSON object per item, keyed by lowercase snake_case names. `table` and `markdown` print tables, and `csv` and `tsv` rows under the table headers.
+These commands use the server named by `--server`. With `--format json` or `ndjson`, and when stdout is not a terminal, `status` and a single field or job print one JSON object, and the lists (`indexes`, `partitions list`, `fields`, `jobs`, `auth list`, `config list-profiles`) print one JSON object per item, keyed by lowercase snake_case names. `table` and `markdown` print tables, and `csv` and `tsv` rows under the table headers.
 
 ## status
 
@@ -65,6 +65,33 @@ lynxdb indexes --format json
 (3 rows)
 3 indexes
 ```
+
+## partitions
+
+List the event-time partitions of an index to see how much space each one uses.
+
+```bash
+lynxdb partitions list web --format json
+```
+
+Each row gives `start` (inclusive), `end` (exclusive), `events`, `bytes` and `parts`. Use the exact `start` from the list when dropping or detaching a partition. A date such as `2026-10-01` means midnight UTC. Listing requires `query` or `admin` scope when authentication is on. Changes require `admin` scope.
+
+To move a partition, detach it into a new directory on the source server. Copy that directory to the destination server, then attach it there.
+
+```bash
+lynxdb --server https://source.example.org partitions detach web 2026-10-01 --to /mnt/archive/web-20261001
+lynxdb --server https://destination.example.org partitions attach web /mnt/archive/web-20261001
+```
+
+Use absolute server paths outside the data directory. The parent of the detach directory must exist. Attach keeps the archive and requires an existing index with matching storage settings and an empty partition for that time span. If late events have filled the span since detach, attach returns a conflict. An attached partition outside the retention window expires on the next [retention pass](../operations/retention.md).
+
+To permanently remove a partition, use `drop`. The command asks for confirmation when standard input is a terminal. Pass `--yes` to skip the prompt.
+
+```bash
+lynxdb partitions drop web 2026-10-01
+```
+
+Drop, detach and attach print the affected partition's totals. New queries see the change immediately. Queries already reading a removed partition finish with their original data, and LynxDB reclaims its files once those readers finish.
 
 ## jobs
 
