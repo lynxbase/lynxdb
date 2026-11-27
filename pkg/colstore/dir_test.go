@@ -359,3 +359,45 @@ func TestDirReadsPartsAgainAfterReleasingTheirPages(t *testing.T) {
 		d.ReleasePages()
 	}
 }
+
+func TestReleasedSnapshotKeepsFileOfRecreatedDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 1, "old")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snap := d.Table().Snapshot()
+	defer snap.Release()
+	if _, err := d.Commit(nil, snap.Parts()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	d, err = OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pf := writePartFile(t, d, 1, 1, "new")
+	if _, err := d.Commit([]*PartFile{pf}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snap.Release()
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	d, err = OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if rows, sum := rowsAndSum(t, d); rows != 1 || sum != 1 {
+		t.Fatalf("reopened directory has %d rows, sum %d", rows, sum)
+	}
+}

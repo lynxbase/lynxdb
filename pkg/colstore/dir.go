@@ -82,13 +82,16 @@ type Dir struct {
 	slot int
 	lost []string
 	live map[*Handle]*partFileRef
+	// Retired parts can outlive the directory through a snapshot. Close
+	// unlinks those still pinned before a new directory can reuse their names.
+	retiredMu sync.Mutex
+	retired   map[string]struct{}
 	// failed, once set, is what every further change returns.
 	failed error
 	closed bool
 }
 
-// partFileRef ties a handle to its file; dead marks a part the manifest no
-// longer names, whose file goes away with its last reader.
+// partFileRef ties a live handle to its file.
 type partFileRef struct {
 	name string
 	meta PartMeta
@@ -96,7 +99,6 @@ type partFileRef struct {
 	// column chunks when they have advice of their own.
 	data   []byte
 	blocks []byte
-	dead   atomic.Bool
 }
 
 // PartMeta is what the manifest records about a part besides its name. Parts
@@ -118,7 +120,7 @@ func OpenDir(path string) (*Dir, error) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return nil, err
 	}
-	d := &Dir{path: path, table: NewTable(), live: map[*Handle]*partFileRef{}}
+	d := &Dir{path: path, table: NewTable(), live: map[*Handle]*partFileRef{}, retired: map[string]struct{}{}}
 	// Run 0 is left to parts without a run.
 	d.nextRun.Store(1)
 	file := filepath.Join(path, manifestName)
@@ -488,9 +490,12 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 			_ = blocks.Unmap()
 		}
 		f.Close()
-		if ref.dead.Load() {
+		d.retiredMu.Lock()
+		if _, dead := d.retired[name]; dead {
 			os.Remove(file)
+			delete(d.retired, name)
 		}
+		d.retiredMu.Unlock()
 	})
 	h.PartMeta = meta
 
@@ -653,10 +658,12 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 	for i, h := range handles {
 		d.live[h] = refs[i]
 	}
+	d.retiredMu.Lock()
 	for _, h := range remove {
-		d.live[h].dead.Store(true)
+		d.retired[d.live[h].name] = struct{}{}
 		delete(d.live, h)
 	}
+	d.retiredMu.Unlock()
 	if err := d.table.Apply(handles, remove); err != nil {
 		// The record stands, so the table must follow it or stop.
 		d.failed = fmt.Errorf("%w: %w", ErrFailed, err)
@@ -794,6 +801,12 @@ func (d *Dir) Close() error {
 		d.failed = ErrClosed
 	}
 	d.table.Close()
+	d.retiredMu.Lock()
+	for name := range d.retired {
+		os.Remove(filepath.Join(d.path, name))
+	}
+	clear(d.retired)
+	d.retiredMu.Unlock()
 	d.end.Close()
 
 	return d.log.Close()
