@@ -208,6 +208,10 @@ type Store struct {
 	// heldPartition selects the partitions a removal has reserved under
 	// dropping. The merger skips them until the removal ends.
 	heldPartition func(int64) bool
+	// draining lets merges finish despite ingest pressure while a partition
+	// change waits for them. Merges share cores and block budgets, so even
+	// a merge of another span may have to finish to release those resources.
+	draining atomic.Bool
 }
 
 // OpenStore opens the table stored in path and starts its merger.
@@ -959,9 +963,11 @@ func (s *Store) pauseMerges(ctx context.Context, matches func(int64) bool) func(
 	})
 	s.mu.Lock()
 	s.heldPartition = matches
+	s.draining.Store(true)
 	for s.hasMerge(matches) && ctx.Err() == nil {
 		s.idle.Wait()
 	}
+	s.draining.Store(false)
 	s.mu.Unlock()
 	stop()
 
@@ -1676,7 +1682,7 @@ var errStopped = errors.New("colstore: merge stopped by Close")
 // runs are due to be merged than the backlog that merges may not let grow,
 // and it stops the merge once the store closes.
 func (s *Store) giveWay() error {
-	for (s.flushWrites.Load() > 0 || s.buffered.Load() >= pressingBytes) && int(s.due.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
+	for (s.flushWrites.Load() > 0 || s.buffered.Load() >= pressingBytes) && int(s.due.Load()) < s.opts.MergeBacklog && !s.closed.Load() && !s.draining.Load() {
 		time.Sleep(2 * time.Millisecond)
 	}
 	if s.closed.Load() {

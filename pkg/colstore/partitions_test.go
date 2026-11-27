@@ -275,3 +275,39 @@ func TestPartitionFailureAfterArchivePublication(t *testing.T) {
 		t.Fatalf("source after retry and reopen has %d rows, sum %d", rows, sum)
 	}
 }
+
+func TestPartitionChangeFinishesWhileMergeYieldsToIngest(t *testing.T) {
+	s, err := OpenStore(t.TempDir(), StoreOptions{Partition: time.Hour, MergeFanIn: 2, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// Continuous flush traffic ordinarily gives a merge no turn at the
+	// disk. The drop needs the merge to release its input runs.
+	s.flushWrites.Add(1)
+	defer s.flushWrites.Add(-1)
+	start := time.Now().UTC().Truncate(time.Hour)
+	for range 2 {
+		if _, err := s.AppendAt([]byte(`{"n":1}`), start.UnixNano()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Sync(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		if running, _ := s.MergeState(); running > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("merge did not start")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if dropped, err := s.DropPartition(ctx, start); err != nil || dropped.Events != 2 {
+		t.Fatalf("drop under ingest pressure = %+v, %v", dropped, err)
+	}
+}
