@@ -687,7 +687,7 @@ func (r *scanRun) byTime(lists *scanLists) {
 
 			return r.one(worker, b, i, &units[i])
 		})
-	case n <= rampFrom:
+	case n <= rampFrom && r.opts.Kept == nil:
 		q.fill(n)
 		r.each(r.workers, 0, n, func(worker int, b *part.Block, i int) bool { return r.one(worker, b, i, &units[i]) })
 	default:
@@ -749,6 +749,10 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 		}
 	}
 	round, opened, had := r.workers, 0, 0
+	if r.opts.Kept != nil {
+		had, _ = r.opts.Kept()
+	}
+	fresh := had == 0
 	if alone {
 		round = 1
 	}
@@ -761,7 +765,7 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 		for len(waiting) > head && int(waiting[len(waiting)-1]) >= end {
 			waiting = waiting[:len(waiting)-1]
 		}
-		if bound != unmoved && opened == 1 {
+		if fresh && bound != unmoved && opened == 1 {
 			for len(q.out) < end {
 				give(len(q.out) + orderedAhead)
 			}
