@@ -1,0 +1,160 @@
+package colstore
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+	"time"
+)
+
+func TestPartitionArchiveValidation(t *testing.T) {
+	opts := StoreOptions{TimeFields: []string{"when"}, Partition: time.Hour, SortKey: []string{"name"}, MergeFanIn: -1, FlushInterval: -1}
+	open := func(opts StoreOptions) *Store {
+		t.Helper()
+		s, err := OpenStore(t.TempDir(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { s.Close() })
+		return s
+	}
+	source, dest := open(opts), open(opts)
+	for _, doc := range []string{`{"name":"first"}`, `{"name":"second"}`} {
+		if _, err := source.AppendAt([]byte(doc), -17); err != nil {
+			t.Fatal(err)
+		}
+		if err := source.Sync(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap := source.Table().Snapshot()
+	defer snap.Release()
+	parts := snap.Parts()
+	if len(parts) != 2 || parts[0].Partition != -1 {
+		t.Fatalf("got %d parts", len(parts))
+	}
+	archive := filepath.Join(t.TempDir(), "archive")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := source.writePartitionArchive(ctx, archive, -1, parts); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled detach: %v", err)
+	}
+	if _, err := os.Stat(archive); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("incomplete archive remains: %v", err)
+	}
+	if err := source.writePartitionArchive(t.Context(), archive, -1, parts); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.writePartitionArchive(t.Context(), archive, -1, parts); !errors.Is(err, ErrArchiveExists) {
+		t.Fatalf("overwrite: %v", err)
+	}
+	settings := opts
+	settings.TimeFields = nil
+	if _, _, err := open(settings).readPartitionArchive(t.Context(), archive); !errors.Is(err, ErrIncompatibleArchive) {
+		t.Fatalf("different settings: %v", err)
+	}
+	manifest := filepath.Join(archive, archiveManifest)
+	original, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m partitionArchive
+	if err := json.Unmarshal(original, &m); err != nil {
+		t.Fatal(err)
+	}
+	bad := func() {
+		t.Helper()
+		if _, _, err := dest.readPartitionArchive(t.Context(), archive); !errors.Is(err, ErrInvalidArchive) {
+			t.Fatalf("invalid archive: %v", err)
+		}
+		if tmp, err := filepath.Glob(filepath.Join(dest.dir.path, "*"+tmpSuffix)); err != nil || len(tmp) != 0 {
+			t.Fatalf("staged files: %v, %v", tmp, err)
+		}
+	}
+	changeManifest := func(m partitionArchive) {
+		t.Helper()
+		data, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(manifest, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.ID++
+	changeManifest(m)
+	bad()
+	m.ID--
+	m.Version++
+	changeManifest(m)
+	bad()
+	m.Version--
+	changeManifest(m)
+	file := filepath.Join(archive, archivePartName(1))
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	damaged := slices.Clone(data)
+	damaged[len(data)/2] ^= 1
+	if err := os.WriteFile(file, damaged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bad()
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	bad()
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, staged, err := dest.readPartitionArchive(t.Context(), archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := dest.dir.Commit(staged, nil)
+	if err != nil || id != -1 || len(got) != 2 || got[0].Run == got[1].Run {
+		t.Fatalf("attach id %d, parts %v, err %v", id, got, err)
+	}
+	for _, h := range got {
+		if h.Rows != 1 || h.MinTime != -17 || h.Partition != -1 {
+			t.Fatalf("unexpected attached part: %v", h)
+		}
+	}
+}
+
+func TestPartitionArchivePaths(t *testing.T) {
+	dir := t.TempDir()
+	index := filepath.Join(dir, "index")
+	store, err := OpenStore(index, StoreOptions{DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, path := range []string{"relative", dir, index, filepath.Join(dir, "sibling"), filepath.Join(index, "new")} {
+		if _, err := store.archivePath(path); !errors.Is(err, ErrInvalidArchive) {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(index, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	for _, path := range []string{link, filepath.Join(link, "new")} {
+		if _, err := store.archivePath(path); !errors.Is(err, ErrInvalidArchive) {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+	root, err := os.OpenRoot(filepath.Dir(link))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if _, err := openArchiveFile(root, filepath.Base(link)); !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("archive member symlink: %v", err)
+	}
+}
