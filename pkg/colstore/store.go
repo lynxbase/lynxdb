@@ -119,8 +119,8 @@ type Store struct {
 	cores  chan struct{}
 	blocks blockBudget
 
-	// dropping serializes partition changes, explicit compaction and
-	// closing the directory. merges counts the merges under way
+	// dropping serializes partition changes and closing the directory.
+	// merges counts the merges under way
 	// for the merger to wait for when it stops.
 	dropping sync.Mutex
 	merges   sync.WaitGroup
@@ -883,8 +883,13 @@ func (s *Store) launch(flush func()) {
 // kick asks the merger to look for work.
 func (s *Store) kick() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kickLocked()
+}
+
+// kickLocked commits the request with the state the merger should see.
+func (s *Store) kickLocked() {
 	s.kicks++
-	s.mu.Unlock()
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -974,8 +979,8 @@ func (s *Store) pauseMerges(ctx context.Context, matches func(int64) bool) func(
 	return func() {
 		s.mu.Lock()
 		s.heldPartition = nil
+		s.kickLocked()
 		s.mu.Unlock()
-		s.kick()
 	}
 }
 
@@ -1020,12 +1025,10 @@ func (s *Store) MergeState() (running, due int) {
 
 // Compact merges the runs of every partition into one and waits for it.
 func (s *Store) Compact() error {
-	s.dropping.Lock()
-	defer s.dropping.Unlock()
 	s.mu.Lock()
 	s.compact = true
+	s.kickLocked()
 	s.mu.Unlock()
-	s.kick()
 
 	return s.Settle()
 }
@@ -1053,7 +1056,10 @@ func (s *Store) mergeLoop() {
 			s.mu.Lock()
 			// A merge that ends asks for another look, so the merger is
 			// idle only when it found nothing to start and none runs.
-			if (!started && s.running == 0) || s.err != nil {
+			// An explicit compaction must revisit a reserved partition after
+			// the change commits or gives up. Its release kicks the merger.
+			waiting := s.compact && s.heldPartition != nil
+			if (!started && s.running == 0 && !waiting) || s.err != nil {
 				s.seen = kicks
 				if s.kicks == kicks {
 					s.compact = false

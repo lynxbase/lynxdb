@@ -311,3 +311,56 @@ func TestPartitionChangeFinishesWhileMergeYieldsToIngest(t *testing.T) {
 		t.Fatalf("drop under ingest pressure = %+v, %v", dropped, err)
 	}
 }
+
+func TestDropPartitionProceedsDuringCompactionOfAnotherSpan(t *testing.T) {
+	held, release := make(chan struct{}), make(chan struct{})
+	var once, unblock sync.Once
+	unpause := func() { unblock.Do(func() { close(release) }) }
+	beforeMergeCommit = func(PartMeta) {
+		once.Do(func() { close(held) })
+		<-release
+	}
+	defer func() { beforeMergeCommit = nil }()
+	start := time.Now().UTC().Truncate(time.Hour)
+	s, err := OpenStore(t.TempDir(), StoreOptions{Partition: time.Hour, MergeFanIn: -1, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	defer unpause()
+	for _, ts := range []time.Time{start, start, start.Add(time.Hour)} {
+		if _, err := s.AppendAt([]byte(`{"n":1}`), ts.UnixNano()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Sync(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	compacted := make(chan error, 1)
+	go func() { compacted <- s.Compact() }()
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("compaction did not start")
+	}
+	dropped := make(chan error, 1)
+	go func() {
+		_, err := s.DropPartition(t.Context(), start.Add(time.Hour))
+		dropped <- err
+	}()
+	select {
+	case err := <-dropped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("drop blocked on the other span's compaction")
+	}
+	unpause()
+	if err := <-compacted; err != nil {
+		t.Fatal(err)
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 2 || sum != 2 {
+		t.Fatalf("compacted index contains %d rows, sum %d", rows, sum)
+	}
+}
