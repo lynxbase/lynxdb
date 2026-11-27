@@ -6,42 +6,13 @@ import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 import Layout from '@theme/Layout';
 
+import MarkdownAlternate from '../components/MarkdownAlternate';
+import content from '../../homepage.json';
+
 import styles from './index.module.css';
 
-const query = String.raw`lynxdb query --file access.ndjson \
-  --format csv --no-stats '
-  source=main
-  | where status >= 500
-  | stats count() as errors by service'`;
-
-const sections = [
-  {
-    title: 'Getting started',
-    description: 'Install LynxDB and run your first query on a local file or a server.',
-    to: '/docs/getting-started/quickstart',
-  },
-  {
-    title: 'PPL guide',
-    description: 'Search events, extract fields, and look up PPL commands and functions.',
-    to: '/docs/ppl/overview',
-  },
-  {
-    title: 'Ingest data',
-    description: 'Send logs over HTTP, OpenTelemetry, Splunk HEC, or syslog.',
-    to: '/docs/guides/ingest-data',
-  },
-  {
-    title: 'Deploy and operate',
-    description: 'Configure storage, retention, authentication, and backups.',
-    to: '/docs/deployment/single-node',
-  },
-];
-
-const references = [
-  {title: 'CLI reference', to: '/docs/cli/overview'},
-  {title: 'REST API', to: '/docs/api/overview'},
-  {title: 'Architecture', to: '/docs/architecture/overview'},
-];
+const {title, description, lead, example, actions, guides, references} = content;
+const [quickStart, install] = actions;
 
 function Arrow(): ReactNode {
   return (
@@ -56,15 +27,35 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Documentation"
-      description="Query log files and standard input with OpenSearch PPL, or run a LynxDB server that stores logs on disk.">
+      description={description}>
+      <MarkdownAlternate permalink={siteConfig.baseUrl} />
       <Head>
         <script type="application/ld+json">
           {JSON.stringify({
             '@context': 'https://schema.org',
-            '@type': 'WebSite',
-            name: 'LynxDB',
-            url: new URL(siteConfig.baseUrl, siteConfig.url).href,
-            inLanguage: 'en',
+            '@graph': [
+              {
+                '@type': 'WebSite',
+                name: title,
+                url: new URL(siteConfig.baseUrl, siteConfig.url).href,
+                inLanguage: 'en',
+                publisher: {'@id': 'https://lynxdb.org/#organization'},
+                about: {'@id': 'https://lynxdb.org/#source-code'},
+              },
+              {
+                '@type': 'Organization',
+                '@id': 'https://lynxdb.org/#organization',
+                name: 'LynxDB',
+                url: 'https://lynxdb.org/',
+              },
+              {
+                '@type': 'SoftwareSourceCode',
+                '@id': 'https://lynxdb.org/#source-code',
+                name: 'LynxDB',
+                codeRepository: 'https://github.com/lynxbase/lynxdb',
+                license: 'https://www.apache.org/licenses/LICENSE-2.0',
+              },
+            ],
           })}
         </script>
       </Head>
@@ -72,22 +63,22 @@ export default function Home(): ReactNode {
         <header className={styles.hero}>
           <div className={`wrap ${styles.heroGrid}`}>
             <div className={styles.intro}>
-              <Heading as="h1">LynxDB documentation</Heading>
-              <p>Query log files and standard input with OpenSearch PPL, or run a server to ingest and search logs from your services.</p>
+              <Heading as="h1">{title}</Heading>
+              <p>{lead}</p>
               <div className={styles.actions}>
-                <Link className={styles.primary} to="/docs/getting-started/quickstart">
-                  Quick start <Arrow />
+                <Link className={styles.primary} to={quickStart.to}>
+                  {quickStart.title} <Arrow />
                 </Link>
-                <Link className={styles.secondary} to="/docs/getting-started/install">Install LynxDB</Link>
+                <Link className={styles.secondary} to={install.to}>{install.title}</Link>
               </div>
             </div>
             <figure className={styles.example}>
-              <figcaption>Count HTTP 5xx responses by service</figcaption>
+              <figcaption>{example.title}</figcaption>
               <div className={styles.command}>
-                <CodeBlock language="bash">{query}</CodeBlock>
+                <CodeBlock language="bash">{example.command}</CodeBlock>
               </div>
               <div className={styles.result} aria-label="Example output">
-                <pre>{'errors,service\n2,api'}</pre>
+                <pre>{example.output}</pre>
               </div>
             </figure>
           </div>
@@ -97,7 +88,7 @@ export default function Home(): ReactNode {
           <section aria-labelledby="guides-title">
             <Heading as="h2" id="guides-title">Guides</Heading>
             <ul>
-              {sections.map(({title, description, to}) => (
+              {guides.map(({title, description, to}) => (
                 <li key={to}>
                   <Link className={styles.topic} to={to}>
                     <span className={styles.topicTitle}>{title}</span>

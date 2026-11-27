@@ -3,6 +3,7 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const blogUrl = 'https://lynxdb.org/blog/';
+const docsUrl = 'https://docs.lynxdb.org';
 
 const codeTheme: PrismTheme = {
   plain: {
@@ -23,7 +24,7 @@ const config: Config = {
   title: 'LynxDB',
   tagline: 'Log analytics in one binary',
   favicon: 'img/lynxdb-appicon-moss.svg',
-  url: 'https://docs.lynxdb.org',
+  url: docsUrl,
   baseUrl: '/',
   trailingSlash: true,
   organizationName: 'lynxbase',
@@ -31,6 +32,14 @@ const config: Config = {
   onBrokenLinks: 'throw',
 
   headTags: [
+    {
+      tagName: 'link',
+      attributes: {rel: 'describedby', href: `${docsUrl}/llms.txt`},
+    },
+    {
+      tagName: 'link',
+      attributes: {rel: 'service-desc', type: 'application/json', href: `${docsUrl}/openapi.json`},
+    },
     {
       tagName: 'link',
       attributes: {

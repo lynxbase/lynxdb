@@ -33,7 +33,7 @@ info:
     an unknown encoding answers `400` with `type` `invalid_request`.
   contact:
     name: LynxDB
-    url: https://lynxdb.io
+    url: https://lynxdb.org/
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
