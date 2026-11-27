@@ -154,12 +154,37 @@ mise run docs
 
 Start a guide with the task and its prerequisites. Show a command the reader
 can run and how to recognize a successful result. Link to the CLI, API, or
-PPL reference for flags and options.
+PPL reference for flags and options. Give each page a descriptive title and
+summary in its front matter. The build uses them in search metadata and
+`llms.txt`. It also writes `robots.txt`, `sitemap.xml`, and Markdown copies
+of the published pages into `docs/site/build`.
 
 The PPL command, function, and aggregation references come from the catalogs
 in `pkg/ppl`. Run `mise run gen` after editing the catalogs.
 [CHANGELOG.md](CHANGELOG.md) is written from the commit subjects when a
 release is cut.
+
+### Documentation deployment
+
+The [Docs workflow](.github/workflows/docs.yml) publishes the build to the
+`lynxdb-docs` Worker. Its `CF_DOCS_WORKERS_TOKEN` secret needs Workers
+Scripts Write on the Cloudflare account plus Zone Read and Workers Routes
+Write on `lynxdb.org`. The account ID comes from `CF_ACCOUNT_ID`.
+
+To verify Cloudflare routing against a local build without updating the
+production Worker, deploy to the preview Worker. Sign in with `cf auth login`
+or set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` for the deployment.
+
+```bash
+mise run docs
+cd docs/site
+mise x node@26.12.1 -- npx --yes cf@1.0.0-rc.6 deploy ./build --mode preview
+```
+
+Production uses the `docs.lynxdb.org/*` Worker route. Keep the proxied
+`docs.lynxdb.org` CNAME pointing to `lynxdb-docs.pages.dev` so removing the
+Worker route returns traffic to Pages. Pause the Docs workflow before
+removing the route during a rollback so the next deploy cannot recreate it.
 
 ## Report an issue
 

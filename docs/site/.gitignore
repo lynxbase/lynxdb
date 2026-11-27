@@ -6,6 +6,7 @@
 
 # Generated files
 .docusaurus
+.cloudflare
 .cache-loader
 
 # Misc
