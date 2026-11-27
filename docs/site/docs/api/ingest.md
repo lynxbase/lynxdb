@@ -235,6 +235,33 @@ curl -s -X POST localhost:3100/api/v1/indexes/main/compact
 
 An index that does not exist answers `404 NOT_FOUND`; a server that is shutting down answers `503 SHUTTING_DOWN` and leaves the files as they were.
 
+## Partition management
+
+List the nonempty partitions of an index in ascending event-time order. The server flushes buffered events for that index before listing them.
+
+```bash
+curl -s localhost:3100/api/v1/indexes/web/partitions
+```
+
+```json
+{"data":{"partitions":[{"start":"2026-10-01T00:00:00Z","end":"2026-10-02T00:00:00Z","events":1000,"bytes":46638,"parts":2}]}}
+```
+
+Each interval includes `start` and excludes `end`. The `bytes` field counts the live part files in that interval. An empty index returns `{"data":{"partitions":[]}}`. Use the exact start returned by the server for a drop or detach. A date alone means midnight UTC.
+
+| Method and path (under `/api/v1`) | Request body | Result |
+|---|---|---|
+| `GET /indexes/{index}/partitions` | | List partitions |
+| `DELETE /indexes/{index}/partitions/{start}` | | Permanently remove the partition |
+| `POST /indexes/{index}/partitions/{start}/detach` | `{"to":"/mnt/archive/web-20261001"}` | Write the archive and remove the partition |
+| `POST /indexes/{index}/partitions/attach` | `{"from":"/mnt/archive/web-20261001"}` | Copy the archived parts into the index |
+
+Each successful change returns `200` with a single partition in `data`, including its event and byte totals. Existing queries retain their snapshots. New queries see the entire change at once. Disk space occupied by removed parts becomes available after their last reader releases them. Later ingest can create a new partition for the same interval.
+
+Archive paths are absolute paths on the server outside its data directory. Detach needs a new directory name in an existing, writable parent. Attach preserves the archive and requires a target index with matching `partition`, `sort_key`, `time_fields` and `part_dictionary`. Create the index before attaching on another server. The normal retention policy applies to imported partitions.
+
+With authentication on, listing requires `query` or `admin`. All three changes require `admin`. A missing index or partition returns `404`. An occupied interval, incompatible settings or an existing detach destination returns `409`. A malformed archive or an unaligned start returns `400`.
+
 ## Errors
 
 | HTTP | Code | When |
