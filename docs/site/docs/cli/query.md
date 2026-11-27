@@ -88,7 +88,7 @@ lynxdb query 'source=main level=ERROR | stats count()' --from 2026-01-15T08:00:0
 lynxdb q 'source=main | timechart span=5m count() by level' --since 1h
 ```
 
-The server syncs the events ingested so far before it runs the query, so a query sees everything ingested before it. Every query runs on the server as a job. The server answers inline when the job finishes within its `query.sync_timeout`; otherwise it answers with the job handle, and the CLI polls the job and prints the result when it finishes, until `--timeout` expires. `lynxdb jobs` lists the jobs.
+A query sees events acknowledged before it started, including buffered events. Every query runs on the server as a job. The server answers inline when the job finishes within its `query.sync_timeout`; otherwise it answers with the job handle, and the CLI polls the job and prints the result when it finishes, until `--timeout` expires. `lynxdb jobs` lists the jobs.
 
 When the server cannot be reached and standard input is not a terminal, the connection error also shows the same query with `--file -`, in case the input was meant to be queried.
 

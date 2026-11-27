@@ -290,8 +290,7 @@ lynxdb query 'source=main | stats count()' --since 5m
 lynxdb fields
 ```
 
-A query syncs the database before it runs, so it sees every event whose
-ingest request was answered.
+A query sees every event whose ingest request completed before it started.
 
 ## Next steps
 

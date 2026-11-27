@@ -111,11 +111,12 @@ The manifest record is the durability boundary. The live table changes after the
 | Path | What it waits for |
 | --- | --- |
 | Native `/api/v1/ingest` and `/api/v1/ingest/raw` | Append. Rows can still be buffered when the response arrives. The request can append rows before a later portion of its body fails. |
-| Elasticsearch `_bulk` | Database sync before successful item results. The single-document compatibility endpoint uses buffered append. |
+| Elasticsearch `_bulk` | Sync of the indexes with accepted documents before successful item results. The single-document compatibility endpoint uses buffered append. |
 | Splunk HEC with `X-Splunk-Request-Channel` | Database sync before recording and returning an `ackId`. Ordinary HEC responses can acknowledge buffered data. |
 | OTLP and syslog receivers | Append through the receiver's event pipeline. |
-| HTTP queries | Sync before execution. A sync error fails the query. |
-| `/api/v1/stats`, `/api/v1/status`, `/api/v1/indexes`, field catalog | Attempt a sync. On failure, the server logs the error and reports the committed parts it can see. |
+| HTTP queries | Pin buffered rows and disk parts of each source index before execution. |
+| `/api/v1/stats`, `/api/v1/status`, `/api/v1/indexes` | Count buffered and committed events. Part counts and storage bytes describe committed parts. |
+| Field catalog | Sync the open stores before listing stored paths. |
 
 The store attempts to flush outstanding writes at graceful shutdown. A process killed before commit can lose buffered events because ingest has no event write-ahead log. The flush interval controls when the store tries to write them. It gives no upper bound on loss during failed or stalled writes.
 
@@ -188,7 +189,7 @@ The end marks are updated after the manifest sync and are themselves unsynced. T
 
 ## Inspecting the store {#statistics}
 
-To see when an index gets its first part, run a test server in a temporary data directory. The long flush interval lets the query trigger the write on an idle server.
+To query a buffered event before its first scheduled flush, run a test server with a one-hour flush interval.
 
 ```bash
 data_dir=$(mktemp -d)
@@ -213,7 +214,12 @@ curl -fsS 'http://127.0.0.1:3101/api/v1/query' \
 {"service":"checkout","http.status":503}
 ```
 
-After the query returns, the directory printed by the first command contains `indexes/demo/settings.json`, `indexes/demo/MANIFEST`, `indexes/demo/MANIFEST.end` and `indexes/demo/0000000000000000.part`.
+Check the event and part counts before the first flush.
+
+```bash
+curl -fsS http://127.0.0.1:3101/api/v1/indexes/demo | jq '.data | {events, parts, bytes}'
+# {"events":1,"parts":0,"bytes":0}
+```
 
 `lynxdb indexes` or `GET /api/v1/indexes` shows each store's event count, part count, bytes and time range. `GET /api/v1/indexes/{index}` also shows the saved settings, `merges_running` and `runs_to_merge`. `GET /api/v1/stats` includes totals across indexes, including `filter_bytes` for the token-filter pages. The byte totals describe live parts. A directory can also contain temporary files, merged-away files pinned by readers, and files in `lost+found/`.
 

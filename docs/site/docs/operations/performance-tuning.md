@@ -64,7 +64,7 @@ storage:
   flush_interval: 5s
 ```
 
-A longer interval writes fewer, larger runs under a light, steady load, and leaves more events in memory, where an abrupt stop loses them. An HTTP query syncs the database before execution, so increasing the interval can also leave more data for a query to flush.
+A longer interval writes fewer, larger runs under a light, steady load, and leaves more events in memory, where an abrupt stop loses them. Queries can read the buffered events throughout the interval.
 
 ### Ingest Mode
 

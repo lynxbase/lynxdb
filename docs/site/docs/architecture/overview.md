@@ -92,7 +92,7 @@ flowchart TD
 
 `query.Compile` is shared by the server, local queries and explain. The cache holds compiled plans by query text. Source resolution, the clock for relative times and the contents of stores belong to execution. The request's `from` and `to` bounds intersect the query's time range as a half-open interval `[from, to)`.
 
-Before it runs a plan, the engine syncs the stores of the indexes the plan reads, so that a query sees the events appended before it; if a sync fails, the query reads what is on disk and its result carries a warning. The synchronous, asynchronous and hybrid responses differ in how long the request waits for that job. A call to `/api/v1/query/stream` uses the request context directly and writes the completed result as NDJSON. The HTTP response format and the engine's internal block-by-block handoff are separate parts of the read path.
+Before it runs a plan, the engine pins the buffered rows and disk parts of each source index. Every scan of that index uses the same snapshot, including scans in subqueries. The synchronous, asynchronous and hybrid responses differ in how long the request waits for that job. A call to `/api/v1/query/stream` uses the request context directly and writes the completed result as NDJSON. The HTTP response format and the engine's internal block-by-block handoff are separate parts of the read path.
 
 At execution time, the engine takes a snapshot of each store a scan needs. It resolves literal and wildcard source names and can combine several snapshots for one scan. A snapshot pins a store's parts while they are read. Each store publishes its own versions, so the combination is assembled from per-store snapshots.
 

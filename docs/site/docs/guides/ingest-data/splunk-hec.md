@@ -75,8 +75,7 @@ which IDs are committed.
 curl -sS http://lynxdb:3100/services/collector/health
 ```
 
-A query syncs the database before it runs, so an event is searchable once
-its request was answered. An event whose ID `/services/collector/ack`
+An event is searchable once its request has been answered. An event whose ID `/services/collector/ack`
 reports as committed is written to disk. HEC routes can be turned off with
 `ingest.splunk_hec.enabled: false`.
 

@@ -22,7 +22,7 @@ Queries are written in [OpenSearch PPL](../ppl/overview.md). Every query starts 
 
 When authentication is on, these endpoints need a key with `query` scope, except `DELETE /query/jobs/{id}`, which needs `admin` scope, and `GET /query/explain` and `GET /catalog`, which accept any valid key.
 
-Before a query runs, the server writes the events ingested so far, so the query sees every event whose ingest request has been answered.
+Each query pins the buffered events and disk parts of its source indexes. It sees every event whose ingest request completed before the query started.
 
 ## POST /query
 
@@ -121,7 +121,7 @@ Queries that start with `explain` (`explain source=main | stats count() by host`
 | `took_ms` | Time the query ran, in milliseconds |
 | `query_id` | Job ID, also sent as the `X-Query-ID` header |
 | `rows` | Rows the query produced, before `offset` and `limit` |
-| `warnings` | Present when the query has something to tell that is not an error: a field that the query reads and that no event of the indexes it scans holds (`no event of the index main holds the field nosuchfield`), or that the latest events of an index could not be written and are not in the result |
+| `warnings` | Present when a query reads a field absent from the indexes it scans, for example `no event of the index main holds the field nosuchfield` |
 
 ### Execution modes
 

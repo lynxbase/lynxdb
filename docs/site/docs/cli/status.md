@@ -17,7 +17,7 @@ lynxdb status
 
 **Alias:** `st`
 
-Server version, uptime and health, then the storage size, the number of events, parts and indexes, each index with its share of the events, and the times of the oldest and newest events. The server writes the events ingested so far before it answers, so the counts include them.
+Server version, uptime and health, then the storage size, the number of events, parts and indexes, each index with its share of the events, and the times of the oldest and newest events. Event counts and time ranges include buffered rows. Parts and bytes measure data committed to disk.
 
 `status` exits with code 3 when the server cannot be reached, and with code 1, after printing the status, when the server reports a health other than `healthy`. That makes it a readiness check for scripts:
 
