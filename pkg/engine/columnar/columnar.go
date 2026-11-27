@@ -63,9 +63,11 @@ type Result struct {
 	// error, such as a field that none of the indexes it reads holds.
 	Warnings []string
 
-	rows   []map[string]event.Value
-	table  *exec.Result
-	schema ir.Schema
+	total   int
+	partial bool
+	rows    []map[string]event.Value
+	table   *exec.Result
+	schema  ir.Schema
 }
 
 // pushedSource starts the name of the source that stands for a part of a

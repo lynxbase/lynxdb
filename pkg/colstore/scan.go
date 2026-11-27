@@ -261,6 +261,8 @@ type BlockFunc func(worker int, p *part.Part, b *part.Block) error
 
 // ScanStats counts what a scan skipped and read.
 type ScanStats struct {
+	// Limited counts blocks skipped after enough matches established the time bound.
+	Limited        int64
 	Blocks         int64
 	SkippedByTime  int64
 	SkippedByToken int64
@@ -420,7 +422,8 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	if opts.ByTime != 0 && opts.Bound != nil {
 		// The bound ruled out the units that were neither opened nor left
 		// out for their tokens.
-		late = int64(len(units)) - r.read.Load() - r.skipped.Load()
+		stats.Limited = int64(len(units)) - stats.Blocks - r.skipped.Load() - late
+		late += stats.Limited
 	}
 	stats.SkippedByTime += late
 	if err := context.Cause(ctx); err != nil {

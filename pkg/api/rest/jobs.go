@@ -88,7 +88,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		respondData(w, http.StatusOK, data, WithQueryID(st.ID), WithTook(st.Elapsed))
 	default:
 		data["completed_at"] = st.Started.Add(st.Elapsed).UTC()
-		meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(st.ID), WithRows(st.Rows)}
+		meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(st.ID), WithRowCount(st.Rows, st.RowsPartial)}
 		if res, _ := job.Result(); res != nil {
 			data["results"] = json.RawMessage(appendResultData(nil, res, jobResultType(job), s.jobResultLimit(), 0))
 			meta = append(meta, WithWarnings(res.Warnings))

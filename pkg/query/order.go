@@ -1,8 +1,9 @@
 package query
 
 import (
-	"github.com/lynxbase/lynxdb/pkg/ir"
 	"slices"
+
+	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
 // eventOrder supplies the input order of an event search and of a head

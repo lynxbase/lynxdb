@@ -79,7 +79,8 @@ type metaFields struct {
 	TookMS  *float64 `json:"took_ms,omitempty"`
 	QueryID string   `json:"query_id,omitempty"`
 	// Rows is the number of rows a query returned.
-	Rows *int `json:"rows,omitempty"`
+	Rows      *int  `json:"rows,omitempty"`
+	RowsExact *bool `json:"rows_exact,omitempty"`
 	// Stats says what a query read; a query that the columnar executor ran
 	// only in part has none.
 	Stats *queryStats `json:"stats,omitempty"`
@@ -140,6 +141,17 @@ func WithQueryID(id string) MetaOpt {
 func WithRows(n int) MetaOpt {
 	return func(m *metaFields) {
 		m.Rows = &n
+	}
+}
+
+// WithRowCount adds the known row count, marking a lower bound explicitly.
+func WithRowCount(n int, partial bool) MetaOpt {
+	return func(m *metaFields) {
+		m.Rows = &n
+		if partial {
+			exact := false
+			m.RowsExact = &exact
+		}
 	}
 }
 

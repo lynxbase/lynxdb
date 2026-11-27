@@ -10,7 +10,8 @@ type Meta struct {
 	TookMS  float64 `json:"took_ms,omitempty"`
 	QueryID string  `json:"query_id,omitempty"`
 	// Rows is the number of rows a query returned.
-	Rows int `json:"rows,omitempty"`
+	Rows      int   `json:"rows,omitempty"`
+	RowsExact *bool `json:"rows_exact,omitempty"`
 	// Warnings tells what a query could not know to be an error, such as a
 	// field that none of the indexes it reads holds.
 	Warnings []string `json:"warnings,omitempty"`
@@ -27,13 +28,14 @@ const (
 
 // QueryRequest is the request body for POST /api/v1/query.
 type QueryRequest struct {
-	Q      string   `json:"q"`
-	From   string   `json:"from,omitempty"`
-	To     string   `json:"to,omitempty"`
-	Limit  int      `json:"limit,omitempty"`
-	Offset int      `json:"offset,omitempty"`
-	Format string   `json:"format,omitempty"`
-	Wait   *float64 `json:"wait,omitempty"`
+	Q          string   `json:"q"`
+	From       string   `json:"from,omitempty"`
+	To         string   `json:"to,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
+	ExactTotal bool     `json:"exact_total,omitempty"`
+	Offset     int      `json:"offset,omitempty"`
+	Format     string   `json:"format,omitempty"`
+	Wait       *float64 `json:"wait,omitempty"`
 }
 
 // QueryResult is the polymorphic response from Query().
@@ -48,9 +50,10 @@ type QueryResult struct {
 
 // EventsResult holds event query results.
 type EventsResult struct {
-	Events  []map[string]interface{} `json:"events"`
-	Total   int                      `json:"total"`
-	HasMore bool                     `json:"has_more"`
+	Events     []map[string]interface{} `json:"events"`
+	Total      int                      `json:"total"`
+	TotalExact *bool                    `json:"total_exact,omitempty"`
+	HasMore    bool                     `json:"has_more"`
 }
 
 // AggregateResult holds aggregate query results.

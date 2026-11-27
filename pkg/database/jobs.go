@@ -32,10 +32,12 @@ type Job struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu       sync.Mutex
-	state    JobState
-	finished time.Time
-	result   *columnar.Result
+	mu                     sync.Mutex
+	detached, pageAccepted bool
+	rowsPartial            bool
+	state                  JobState
+	finished               time.Time
+	result                 *columnar.Result
 	// rows is the number of rows of a result that the job gave up.
 	rows int
 	err  error
@@ -50,7 +52,9 @@ type JobStatus struct {
 	Elapsed time.Duration
 	// Rows is the number of rows of a finished job.
 	Rows int
-	Err  error
+	// RowsPartial marks a lower bound after the request took an early page.
+	RowsPartial bool
+	Err         error
 }
 
 // Done is closed when the job has finished.
@@ -66,9 +70,10 @@ func (j *Job) Status() JobStatus {
 	} else {
 		st.Elapsed = j.finished.Sub(j.Started)
 	}
-	st.Rows = j.rows
+	st.Rows, st.RowsPartial = j.rows, j.rowsPartial
 	if j.result != nil {
-		st.Rows = j.result.Len()
+		total, exact := j.result.Total()
+		st.Rows, st.RowsPartial = total, !exact
 	}
 
 	return st
@@ -80,6 +85,25 @@ func (j *Job) Result() (*columnar.Result, error) {
 	defer j.mu.Unlock()
 
 	return j.result, j.err
+}
+
+// Detach makes a timed-out request leave the complete answer with the job.
+// When the page already won the race, the request takes that answer.
+func (j *Job) Detach() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.pageAccepted || j.state != JobRunning {
+		return false
+	}
+	j.detached = true
+	return true
+}
+
+func (j *Job) acceptPage() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.pageAccepted = !j.detached
+	return j.pageAccepted
 }
 
 // Cancel stops the job.
@@ -111,6 +135,9 @@ func (db *DB) Submit(c *query.Compiled, src string, opts QueryOptions) (*Job, er
 	j := &Job{ID: newJobID(), Query: src, Started: time.Now(), cancel: cancel,
 		done: make(chan struct{}), state: JobRunning}
 	db.jobs.add(j)
+	if opts.PageBound > 0 {
+		opts.acceptPage = j.acceptPage
+	}
 	go func() {
 		defer close(j.done)
 		defer cancel()
@@ -132,7 +159,8 @@ func (db *DB) Job(id string) (*Job, bool) { return db.jobs.get(id) }
 func (db *DB) Answered(j *Job) {
 	j.mu.Lock()
 	if j.result != nil {
-		j.rows, j.result = j.result.Len(), nil
+		total, exact := j.result.Total()
+		j.rows, j.rowsPartial, j.result = total, !exact, nil
 	}
 	j.mu.Unlock()
 	db.jobs.answered(j.ID)

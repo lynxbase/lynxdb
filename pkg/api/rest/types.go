@@ -2,16 +2,17 @@ package rest
 
 // QueryRequest is the request body for POST /api/v1/query.
 type QueryRequest struct {
-	Q        string   `json:"q"`
-	Query    string   `json:"query"` // alias for q
-	From     string   `json:"from"`  // "-1h", "now", ISO 8601
-	To       string   `json:"to"`
-	Earliest string   `json:"earliest"` // alias for from
-	Latest   string   `json:"latest"`   // alias for to
-	Limit    int      `json:"limit"`
-	Offset   int      `json:"offset"`
-	Format   string   `json:"format"` // json (default)
-	Wait     *float64 `json:"wait"`   // nil=sync, 0=async, N=hybrid
+	Q          string   `json:"q"`
+	Query      string   `json:"query"` // alias for q
+	From       string   `json:"from"`  // "-1h", "now", ISO 8601
+	To         string   `json:"to"`
+	Earliest   string   `json:"earliest"` // alias for from
+	Latest     string   `json:"latest"`   // alias for to
+	ExactTotal bool     `json:"exact_total"`
+	Limit      int      `json:"limit"`
+	Offset     int      `json:"offset"`
+	Format     string   `json:"format"` // json (default)
+	Wait       *float64 `json:"wait"`   // nil=sync, 0=async, N=hybrid
 }
 
 func (r *QueryRequest) effectiveQuery() string {

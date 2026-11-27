@@ -89,9 +89,11 @@ type Column struct {
 
 // Result is the rows a query produced.
 type Result struct {
-	Columns []Column
-	Rows    int
-	Stats   Stats
+	// MatchedAll reports that the scan counted every matching input row.
+	MatchedAll bool
+	Columns    []Column
+	Rows       int
+	Stats      Stats
 }
 
 // Value returns the value at a row and column.

@@ -285,7 +285,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 			sinks = append(sinks, &w.sink)
 		}
 	}
-	res := &Result{}
+	res := &Result{MatchedAll: stats.Limited == 0 && err == nil}
 	if res.Columns, res.Rows, err = x.finish(snap, sinks); err != nil {
 		return nil, err
 	}
