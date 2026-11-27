@@ -20,13 +20,15 @@ func newPartitionsCmd() *cobra.Command {
 		Use:   "partitions",
 		Short: "List, drop, detach or attach index partitions",
 	}
+	timeout := cmd.PersistentFlags().Duration("timeout", 0, "Maximum time to wait for the server (0 = no timeout)")
+	partitionClient := func() *client.Client { return newAPIClient(client.WithTimeout(*timeout)) }
 	list := &cobra.Command{
 		Use:     "list <index>",
 		Short:   "Show partition boundaries, events, bytes and parts",
 		Example: "  lynxdb partitions list web",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			partitions, err := apiClient().Partitions(cmd.Context(), args[0])
+			partitions, err := partitionClient().Partitions(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -44,7 +46,7 @@ func newPartitionsCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "  Aborted.")
 				return nil
 			}
-			return printPartitionResult(apiClient().DropPartition(cmd.Context(), args[0], args[1]))
+			return printPartitionResult(partitionClient().DropPartition(cmd.Context(), args[0], args[1]))
 		},
 	}
 	drop.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
@@ -56,9 +58,7 @@ func newPartitionsCmd() *cobra.Command {
 		Example: "  lynxdb partitions detach web 2026-10-01 --to /mnt/archive/web-20261001",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Copying a partition can exceed the client's default request timeout.
-			c := newAPIClient(client.WithTimeout(0))
-			return printPartitionResult(c.DetachPartition(cmd.Context(), args[0], args[1], to))
+			return printPartitionResult(partitionClient().DetachPartition(cmd.Context(), args[0], args[1], to))
 		},
 	}
 	detach.Flags().StringVar(&to, "to", "", "New directory on the server for the detached partition")
@@ -70,8 +70,7 @@ func newPartitionsCmd() *cobra.Command {
 		Example: "  lynxdb partitions attach web /mnt/archive/web-20261001",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := newAPIClient(client.WithTimeout(0))
-			return printPartitionResult(c.AttachPartition(cmd.Context(), args[0], args[1]))
+			return printPartitionResult(partitionClient().AttachPartition(cmd.Context(), args[0], args[1]))
 		},
 	}
 	cmd.AddCommand(list, drop, detach, attach)

@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -59,5 +63,20 @@ func TestPartitionsCLITransfer(t *testing.T) {
 	}
 	if n := jsonCount(t, stdout); n != 294 {
 		t.Fatalf("destination has %d error events, want 294", n)
+	}
+}
+
+func TestPartitionsCLITimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	_, _, err := runCmd(t, "--server", srv.URL, "partitions", "list", "web", "--timeout", "20ms")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("list: %v, want deadline exceeded", err)
 	}
 }

@@ -290,7 +290,7 @@ lynxdb partitions attach web /mnt/archive/web-20261001
 lynxdb partitions drop web 2026-10-01
 ```
 
-Each row gives the inclusive start, exclusive end, event count, bytes and part count of a partition. Use the exact start from the list, or a UTC date for a start at midnight. Drop asks for confirmation on a terminal (`--yes` skips the prompt). Detach and attach take absolute paths on the server. See [partitions](../../docs/site/docs/cli/status.md#partitions) for destination requirements and retention.
+Each row gives the inclusive start, exclusive end, event count, bytes and part count of a partition. Use the exact start from the list, or a UTC date for a start at midnight. Drop asks for confirmation on a terminal (`--yes` skips the prompt). Detach and attach take absolute paths on the server. `--timeout` limits how long the CLI waits (default `0`, no timeout). See [partitions](../../docs/site/docs/cli/status.md#partitions) for destination requirements and retention.
 
 ## jobs
 

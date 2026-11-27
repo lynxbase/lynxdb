@@ -74,7 +74,7 @@ List the event-time partitions of an index to see how much space each one uses.
 lynxdb partitions list web --format json
 ```
 
-Each row gives `start` (inclusive), `end` (exclusive), `events`, `bytes` and `parts`. Use the exact `start` from the list when dropping or detaching a partition. A date such as `2026-10-01` means midnight UTC. Listing requires `query` or `admin` scope when authentication is on. Changes require `admin` scope.
+Each row gives `start` (inclusive), `end` (exclusive), `events`, `bytes` and `parts`. Use the exact `start` from the list when dropping or detaching a partition. A date such as `2026-10-01` means midnight UTC. Listing requires `query` or `admin` scope when authentication is on. Changes require `admin` scope. The CLI waits for the operation to finish. Set `--timeout` to bound the wait, for example `--timeout 30m`.
 
 To move a partition, detach it into a new directory on the source server. Copy that directory to the destination server, then attach it there.
 
