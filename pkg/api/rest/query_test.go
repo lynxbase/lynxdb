@@ -52,6 +52,8 @@ func TestEventPageLookahead(t *testing.T) {
 		{"source=main | where status >= 202", 2, 0, 3, 2, true},
 		{"source=main", 2, 3, 5, 2, false},
 		{"source=main", 2, 100, 5, 0, false},
+		{"source=main | head 0", 2, 0, 0, 0, false},
+		{"source=main | head 2 from 2", 2, 0, 2, 2, false},
 		{"source=main | head 2", 2, 0, 2, 2, false},
 	} {
 		code, reply := call(t, "POST", "http://"+srv.Addr()+"/api/v1/query", fmt.Sprintf(`{"q":%q,"limit":%d,"offset":%d}`, tc.q, tc.limit, tc.offset))
@@ -66,5 +68,41 @@ func TestEventPageLookahead(t *testing.T) {
 	code, _ := call(t, "POST", "http://"+srv.Addr()+"/api/v1/query", fmt.Sprintf(`{"q":"source=main","limit":2,"offset":%d}`, math.MaxInt))
 	if code != 400 {
 		t.Errorf("overflow status %d", code)
+	}
+}
+
+func TestEventPageReportsLowerBoundAndExactCount(t *testing.T) {
+	srv, stop := startTestServer(t)
+	defer stop()
+	for i := 1; i <= 4; i++ {
+		ingestNDJSON(t, srv.Addr(), "main", fmt.Sprintf(`{"timestamp":"2026-05-0%dT12:00:00Z","id":%d}`, i, i))
+		if err := srv.DB().Sync(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, exact := range []bool{false, true} {
+		code, reply := call(t, "POST", "http://"+srv.Addr()+"/api/v1/query", fmt.Sprintf(`{"q":"source=main","limit":1,"exact_total":%t}`, exact))
+		if code != 200 {
+			t.Fatal(reply)
+		}
+		d := reply["data"].(map[string]interface{})
+		meta := reply["meta"].(map[string]interface{})
+		total := 2.
+		if exact {
+			total = 4
+		}
+		if d["total"] != total || d["has_more"] != true || (d["total_exact"] == false) == exact || (meta["rows_exact"] == false) == exact {
+			t.Fatalf("exact %t: %v", exact, reply)
+		}
+		rows := d["events"].([]interface{})
+		if len(rows) != 1 || rows[0].(map[string]interface{})["id"] != 4. {
+			t.Fatalf("events: %v", rows)
+		}
+	}
+	for _, param := range []string{"offset=99999999999999999999", "limit=99999999999999999999"} {
+		code, _ := call(t, "GET", "http://"+srv.Addr()+"/api/v1/query?q=source%3Dmain&"+param, "")
+		if code != 400 {
+			t.Fatalf("%s: status %d", param, code)
+		}
 	}
 }

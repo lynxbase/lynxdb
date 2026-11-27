@@ -88,14 +88,23 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.executeQuery(w, r, QueryRequest{ExactTotal: exact,
+	req := QueryRequest{ExactTotal: exact,
 		Q:      q,
 		From:   r.URL.Query().Get("from"),
 		To:     r.URL.Query().Get("to"),
-		Limit:  parseIntParam(r, "limit", 0),
-		Offset: parseIntParam(r, "offset", 0),
 		Format: format,
-	})
+	}
+	for name, dst := range map[string]*int{"offset": &req.Offset, "limit": &req.Limit} {
+		if value := r.URL.Query().Get(name); value != "" {
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				respondError(w, ErrCodeValidationError, http.StatusBadRequest, name+" must be a supported integer")
+				return
+			}
+			*dst = n
+		}
+	}
+	s.executeQuery(w, r, req)
 }
 
 // handleQuery is the three-mode query handler (sync/hybrid/async).

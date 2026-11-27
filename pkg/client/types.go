@@ -62,6 +62,7 @@ type AggregateResult struct {
 	Columns   []string        `json:"columns"`
 	Rows      [][]interface{} `json:"rows"`
 	TotalRows int             `json:"total_rows,omitempty"`
+	HasMore   bool            `json:"has_more"`
 }
 
 // JobHandle is returned for async/hybrid queries (HTTP 202).
