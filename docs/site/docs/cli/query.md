@@ -24,6 +24,15 @@ lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort -
 
 Quote the query with single quotes so the shell leaves `|`, `>` and double-quoted strings alone. Several arguments are joined with spaces into one query.
 
+To show the 20 newest errors from the last hour, run:
+
+```bash
+lynxdb query --since 1h 'source=main level=ERROR | head 20'
+lynxdb query --file access.ndjson --since 1h 'source=main level=ERROR | head 20'
+```
+
+Both modes use descending event time for a search. Use `sort` to select another order.
+
 ## Flags
 
 | Flag | Short | Default | Modes | Description |

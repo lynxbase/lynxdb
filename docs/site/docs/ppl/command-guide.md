@@ -151,6 +151,8 @@ source=main | head 10 from 20
 source=main | reverse
 ```
 
+Event searches return matching rows by descending `_time`. Equal timestamps follow the row positions of the pinned snapshot.
+
 `sort` is stable; NULLs sort first in ascending order and last in
 descending order. `ip(field)` sorts by the text form of the address. `head`
 defaults to 10 rows; `from` skips rows first. LynxDB turns `sort` followed by
