@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/query"
 )
 
@@ -104,5 +105,19 @@ func TestEventPageReportsLowerBoundAndExactCount(t *testing.T) {
 		if code != 400 {
 			t.Fatalf("%s: status %d", param, code)
 		}
+	}
+}
+
+func TestDefaultEventPage(t *testing.T) {
+	srv, stop := startTestServerWithQueryConfig(t, config.DefaultConfig().Query)
+	defer stop()
+	appendStatusRangeEvents(t, srv, 1010)
+	code, reply := call(t, "POST", "http://"+srv.Addr()+"/api/v1/query", `{"q":"source=main | fields _time","offset":5}`)
+	if code != 200 {
+		t.Fatal(reply)
+	}
+	data := reply["data"].(map[string]interface{})
+	if n := len(data["events"].([]interface{})); n != 1000 || data["has_more"] != true {
+		t.Fatalf("rows %d, has_more %v", n, data["has_more"])
 	}
 }

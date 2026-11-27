@@ -78,3 +78,69 @@ func TestEventPagesMatchFullSortDuringFlush(t *testing.T) {
 		t.Fatalf("detached job: rows %v, error %v", res, err)
 	}
 }
+
+func TestPageAndFullSortShareBufferedEventsAcrossFlush(t *testing.T) {
+	db, err := Open(testConfig(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	c, err := query.Compile("source=main error | fields id, _time")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := query.Compile("source=main error | sort - _time | fields id, _time")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(start, end int) error {
+		var lines strings.Builder
+		for id := start; id < end; id++ {
+			fmt.Fprintf(&lines, `{"ts":%d,"id":%d,"msg":"error"}`+"\n", testNow.Add(time.Duration(id%9)*time.Minute).UnixMicro(), id)
+		}
+		_, err := appendTo(db, "main", []byte(lines.String()))
+		return err
+	}
+	if err := write(0, 512); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := db.querySources(t.Context(), c.Plan, "main")
+	defer snap.release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for batch := 1; batch <= 8; batch++ {
+			if err := db.Sync(); err != nil {
+				done <- err
+				return
+			}
+			if err := write(512*batch, 512*(batch+1)); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	defer func() {
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	full, err := Run(t.Context(), ref.Plan, snap, Options{Workers: 1})
+	if err != nil || full.Len() != 512 {
+		t.Fatalf("full result: %v, %v", full, err)
+	}
+	for _, start := range []int{0, 20, 40, 480, 500, 512} {
+		page, _ := pagePlan(c.Plan, start+20+1)
+		got, err := Run(t.Context(), page, snap, Options{Workers: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		end := min(512, start+20)
+		if got.Len() < end || render(got.Maps()[start:end]) != render(full.Maps()[start:end]) {
+			t.Fatalf("different rows at offset %d", start)
+		}
+	}
+}
