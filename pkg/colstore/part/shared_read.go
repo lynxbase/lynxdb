@@ -266,6 +266,9 @@ func (b *Block) AheadRows(ref *ColumnRef, rows []uint32) error {
 // pages of the dictionary and not most of them, and asks for those pages
 // together before it reads the first.
 func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error {
+	if ref.enc == encTimed && len(rows) <= b.Rows/8 && (ref.Kind == vec.KindString || ref.Kind == vec.KindVariant) {
+		return b.decodeTimedRows(ref, rows, dst)
+	}
 	if !ref.Shared() {
 		return b.Decode(ref, dst)
 	}

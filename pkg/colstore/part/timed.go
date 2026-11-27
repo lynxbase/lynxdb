@@ -1710,6 +1710,65 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 	return nil
 }
 
+// decodeTimedRows spells only the strings requested by a page. The integer
+// sections, including references to sibling columns, still decode together.
+func (b *Block) decodeTimedRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error {
+	if err := b.DecodePresence(ref, dst); err != nil {
+		return err
+	}
+	v := &b.d.timed
+	if err := b.readTimed(ref, v, b.depth); err != nil {
+		return err
+	}
+	if err := v.resolve(); err != nil {
+		return err
+	}
+	b.pos = append(b.pos[:0], rows...)
+	slices.Sort(b.pos)
+	b.pos = slices.Compact(b.pos)
+	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
+	dst.Offsets = grow(dst.Offsets, b.Rows+1)
+	data := dst.Data[:0]
+	at, run, repeats := 0, 0, 0
+	for _, row := range b.pos {
+		r := int(row)
+		if r >= b.Rows || !dst.IsValid(r) {
+			continue
+		}
+		for ; at <= r; at++ {
+			dst.Offsets[at] = uint32(len(data))
+		}
+		i := r
+		if dst.Valid != nil {
+			i = dst.Valid.Rank(r)
+		}
+		// A run repeats the preceding kept value.
+		for run < len(v.runStart) && i >= int(v.runStart[run]+v.runLen[run]) {
+			repeats += int(v.runLen[run])
+			run++
+		}
+		if run < len(v.runStart) && i >= int(v.runStart[run]) {
+			i = int(v.runStart[run]) - 1
+		}
+		i -= repeats
+		n := v.stride
+		ex, found := slices.BinarySearch(v.excIndex, int32(i))
+		if found {
+			n = len(v.excValue[ex])
+		}
+		v.next = ex
+		off := len(data)
+		data = slices.Grow(data, n)[:off+n]
+		v.put(data[off:], i)
+	}
+	for ; at <= b.Rows; at++ {
+		dst.Offsets[at] = uint32(len(data))
+	}
+	dst.Data = data
+
+	return nil
+}
+
 // putValues writes the values of the chunk one after another into data,
 // grown, and their offsets into offsets, one for every value and one past
 // them, and returns data and their bytes.

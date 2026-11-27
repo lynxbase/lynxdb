@@ -338,6 +338,22 @@ func checkTimedColumns(t *testing.T, p *Part, values []map[string]string, cols [
 				if err := blk.Decode(ref, &byRow); err != nil {
 					t.Fatalf("block %d %s (%s): %v", i, c.path, c.family.name, err)
 				}
+				step := max(blk.Rows/7, 1)
+				var rows []uint32
+				for row := blk.Rows - 1; row >= 0; row -= step {
+					rows = append(rows, uint32(row))
+				}
+				rows = append(rows, rows[0])
+				var picked vec.Column
+				if err := blk.DecodeRows(ref, rows, &picked); err != nil {
+					t.Fatal(err)
+				}
+				for _, row := range rows {
+					r := int(row)
+					if picked.IsValid(r) != byRow.IsValid(r) || (picked.IsValid(r) && string(picked.Bytes(r)) != string(byRow.Bytes(r))) {
+						t.Fatalf("block %d %s row %d: selected value differs from full decode", i, c.path, r)
+					}
+				}
 				if err := blk.DecodeValues(ref, &byValue); err != nil {
 					t.Fatalf("block %d %s (%s) by value: %v", i, c.path, c.family.name, err)
 				}

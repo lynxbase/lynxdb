@@ -33,14 +33,8 @@ type resolver struct {
 	rows []uint32
 }
 
-// decode reads the column of ref for the rows of picks into r.col: the
-// strings of those rows alone where the block stores codes of a part
-// dictionary, whose strings lie all over it, and the whole column
-// otherwise.
+// decode reads the column values at the rows that survived selection.
 func (r *resolver) decode(ref *part.ColumnRef, picks []placed) error {
-	if !ref.Shared() {
-		return r.b.Decode(ref, &r.col)
-	}
 	r.rows = r.rows[:0]
 	for _, pk := range picks {
 		r.rows = append(r.rows, uint32(pk.loc&0xFFFF))
