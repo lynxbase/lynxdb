@@ -5,16 +5,21 @@
 
 .heroGrid,
 .directory {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1.5rem;
   width: min(100% - 2 * var(--lynx-gutter), var(--lynx-max-width));
   margin-inline: auto;
 }
 
 .heroGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
   align-items: center;
-  gap: clamp(2rem, 5.6vw, 5rem);
   padding-block: clamp(3.5rem, 8vw, 7.5rem);
+}
+
+.intro,
+.example {
+  grid-column: span 6;
 }
 
 .intro h1 {
@@ -146,10 +151,15 @@
 }
 
 .directory {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: clamp(2rem, 5.6vw, 5rem);
   padding-block: clamp(2.5rem, 4.5vw, 4.5rem);
+}
+
+.directory > section {
+  grid-column: span 4;
+}
+
+.directory > section:first-child {
+  grid-column: span 8;
 }
 
 .directory h2 {
@@ -231,7 +241,12 @@
 
 @media (max-width: 820px) {
   .heroGrid {
-    grid-template-columns: minmax(0, 1fr);
+    row-gap: 2rem;
+  }
+
+  .intro,
+  .example {
+    grid-column: 1 / -1;
   }
 
   .intro h1 {
@@ -245,8 +260,9 @@
     padding-block: 2.5rem;
   }
 
-  .directory {
-    grid-template-columns: minmax(0, 1fr);
+  .directory > section,
+  .directory > section:first-child {
+    grid-column: 1 / -1;
   }
 }
 

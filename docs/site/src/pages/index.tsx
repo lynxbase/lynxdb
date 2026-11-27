@@ -70,7 +70,7 @@ export default function Home(): ReactNode {
       </Head>
       <main>
         <header className={styles.hero}>
-          <div className={styles.heroGrid}>
+          <div className={`wrap ${styles.heroGrid}`}>
             <div className={styles.intro}>
               <Heading as="h1">LynxDB documentation</Heading>
               <p>Query log files and standard input with OpenSearch PPL, or run a server to ingest and search logs from your services.</p>
@@ -93,7 +93,7 @@ export default function Home(): ReactNode {
           </div>
         </header>
 
-        <div className={styles.directory}>
+        <div className={`wrap ${styles.directory}`}>
           <section aria-labelledby="guides-title">
             <Heading as="h2" id="guides-title">Guides</Heading>
             <ul>

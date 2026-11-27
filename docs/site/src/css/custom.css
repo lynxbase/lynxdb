@@ -169,6 +169,7 @@ kbd {
 
 .footer > .container {
   max-width: var(--lynx-max-width);
+  padding-inline: 0;
 }
 
 .footer__title {
