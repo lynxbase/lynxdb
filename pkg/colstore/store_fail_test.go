@@ -424,11 +424,16 @@ func TestReadSnapshotDuringFlush(t *testing.T) {
 	if err := <-wrote; err != nil {
 		t.Fatal(err)
 	}
+	published := pin()
 	appendRows(70, 20)
+	if err := s.Sync(); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Compact(); err != nil {
 		t.Fatal(err)
 	}
 	check(before, 40)
 	check(during, 70)
+	check(published, 70)
 	check(pin(), 90)
 }
