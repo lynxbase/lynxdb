@@ -56,6 +56,9 @@ func Open(cfg Config) (*DB, error) {
 		}
 		db.cfg.Dir, db.temporary = dir, true
 	}
+	if db.cfg.Store.DataDir == "" {
+		db.cfg.Store.DataDir = db.cfg.Dir
+	}
 	if err := os.MkdirAll(db.cfg.Dir, 0o755); err != nil {
 		return nil, err
 	}

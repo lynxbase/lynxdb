@@ -884,6 +884,10 @@ func TestAuth_RoutesRequireTheirScope(t *testing.T) {
 	}{
 		{"POST", "/api/v1/ingest", []auth.Scope{auth.ScopeIngest}},
 		{"GET", "/api/v1/indexes", []auth.Scope{auth.ScopeQuery}},
+		{"GET", "/api/v1/indexes/main/partitions", []auth.Scope{auth.ScopeQuery, auth.ScopeAdmin}},
+		{"DELETE", "/api/v1/indexes/main/partitions/2026-10-01", []auth.Scope{auth.ScopeAdmin}},
+		{"POST", "/api/v1/indexes/main/partitions/2026-10-01/detach", []auth.Scope{auth.ScopeAdmin}},
+		{"POST", "/api/v1/indexes/main/partitions/attach", []auth.Scope{auth.ScopeAdmin}},
 		{"GET", "/api/v1/fields", []auth.Scope{auth.ScopeQuery}},
 		{"GET", "/api/v1/fields/host/values", []auth.Scope{auth.ScopeQuery}},
 		{"GET", "/api/v1/histogram", []auth.Scope{auth.ScopeQuery}},

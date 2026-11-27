@@ -80,6 +80,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	db, err := database.Open(database.Config{
 		Dir:            indexDir(cfg.DataDir),
+		DataDir:        cfg.DataDir,
 		Retention:      cfg.Retention,
 		Partition:      cfg.Storage.Partition.Duration(),
 		FlushInterval:  cfg.Storage.FlushInterval.Duration(),
@@ -276,6 +277,10 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	mux.HandleFunc("PUT /api/v1/indexes/{index}", s.handleCreateIndex)
 	mux.HandleFunc("GET /api/v1/indexes/{index}/columns", s.handleIndexColumns)
 	mux.HandleFunc("POST /api/v1/indexes/{index}/compact", s.handleCompactIndex)
+	mux.HandleFunc("GET /api/v1/indexes/{index}/partitions", s.handleListPartitions)
+	mux.HandleFunc("DELETE /api/v1/indexes/{index}/partitions/{start}", s.handleDropPartition)
+	mux.HandleFunc("POST /api/v1/indexes/{index}/partitions/{start}/detach", s.handleDetachPartition)
+	mux.HandleFunc("POST /api/v1/indexes/{index}/partitions/attach", s.handleAttachPartition)
 
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngestEvents)
 	mux.HandleFunc("POST /api/v1/ingest/raw", s.handleIngestRaw)
