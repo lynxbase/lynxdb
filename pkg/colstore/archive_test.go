@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -159,7 +160,7 @@ func TestPartitionArchivePaths(t *testing.T) {
 	}
 	defer store.Close()
 	for _, path := range []string{"relative", dir, index, filepath.Join(dir, "sibling"), filepath.Join(index, "new")} {
-		if _, err := store.archivePath(path); !errors.Is(err, ErrInvalidArchive) {
+		if _, err := store.beginPartitionArchive(path, 0); !errors.Is(err, ErrInvalidArchive) {
 			t.Errorf("%s: %v", path, err)
 		}
 	}
@@ -168,7 +169,7 @@ func TestPartitionArchivePaths(t *testing.T) {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	for _, path := range []string{link, filepath.Join(link, "new")} {
-		if _, err := store.archivePath(path); !errors.Is(err, ErrInvalidArchive) {
+		if _, err := store.beginPartitionArchive(path, 0); !errors.Is(err, ErrInvalidArchive) {
 			t.Errorf("%s: %v", path, err)
 		}
 	}
@@ -179,5 +180,140 @@ func TestPartitionArchivePaths(t *testing.T) {
 	defer root.Close()
 	if _, err := openArchiveFile(root, filepath.Base(link)); !errors.Is(err, ErrInvalidArchive) {
 		t.Fatalf("archive member symlink: %v", err)
+	}
+}
+
+func TestArchiveWriterKeepsExistingEntries(t *testing.T) {
+	s, err := OpenStore(t.TempDir(), StoreOptions{Partition: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	target := filepath.Join(t.TempDir(), "archive")
+	w, err := s.beginPartitionArchive(target, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(target, archiveManifest)
+	const original = "reserved"
+	if err := os.WriteFile(manifest, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.publish(t.Context()); !errors.Is(err, ErrArchiveExists) {
+		t.Fatalf("publishing over existing manifest: %v", err)
+	}
+	w.close()
+	if b, err := os.ReadFile(manifest); err != nil || string(b) != original {
+		t.Fatalf("existing contents after cleanup: %q, %v", b, err)
+	}
+}
+
+func TestArchiveDirectoryMovedDuringExport(t *testing.T) {
+	s, err := OpenStore(t.TempDir(), StoreOptions{Partition: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	temp := t.TempDir()
+	parent, next := filepath.Join(temp, "out"), filepath.Join(temp, "moved")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(parent, "archive")
+	w, err := s.beginPartitionArchive(target, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(parent, next); err != nil {
+		w.close()
+		t.Skipf("cannot rename an open directory: %v", err)
+	}
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.publish(t.Context()); !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("publication after directory move: %v", err)
+	}
+	w.close()
+	for _, p := range []string{target, filepath.Join(next, "archive")} {
+		entries, err := os.ReadDir(p)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("%s after cleanup: %v, %v", p, entries, err)
+		}
+	}
+}
+
+func TestArchiveThroughParentAlias(t *testing.T) {
+	s, err := OpenStore(t.TempDir(), StoreOptions{Partition: time.Hour, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	parent := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "out")
+	if err := os.Symlink(parent, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	when := time.Unix(3600, 0)
+	if _, err := s.AppendAt([]byte(`{"msg":"first"}`), when.UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(alias, "archive")
+	detached, err := s.DetachPartition(t.Context(), when, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "archive", archiveManifest)); err != nil {
+		t.Fatal(err)
+	}
+	attached, err := s.AttachPartition(t.Context(), archive)
+	if err != nil || attached != detached || attached.Events != 1 {
+		t.Fatalf("detach %+v, attach %+v, error %v", detached, attached, err)
+	}
+}
+
+func TestArchivePublicationOnDirectorySyncFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory sync is unavailable")
+	}
+	archive := filepath.Join(t.TempDir(), "export")
+	manifest := filepath.Join(archive, archiveManifest)
+	failure := errors.New("directory sync failed")
+	replaceSyncFile(t, func(f *os.File) error {
+		if filepath.Base(f.Name()) == archiveManifest+tmpSuffix {
+			if _, err := os.Stat(manifest); !errors.Is(err, os.ErrNotExist) {
+				return errors.New("archive manifest visible before sync")
+			}
+		}
+		dest, _ := os.Stat(archive)
+		info, err := f.Stat()
+		if err == nil && os.SameFile(info, dest) {
+			return failure
+		}
+		return f.Sync()
+	})
+	opts := StoreOptions{Partition: time.Hour, MergeFanIn: -1, FlushInterval: -1}
+	s, err := OpenStore(t.TempDir(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Unix(3600, 0)
+	if _, err := s.AppendAt([]byte(`{"n":42}`), start.UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DetachPartition(t.Context(), start, archive); !errors.Is(err, failure) {
+		t.Fatalf("detach after directory sync failure: %v", err)
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 1 || sum != 42 {
+		t.Fatalf("live source: %d rows, sum %d", rows, sum)
+	}
+	dest, err := OpenStore(t.TempDir(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dest.Close()
+	if got, err := dest.AttachPartition(t.Context(), archive); err != nil || got.Events != 1 {
+		t.Fatalf("attach published archive: %+v, %v", got, err)
 	}
 }

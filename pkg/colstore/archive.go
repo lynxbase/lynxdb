@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -57,25 +59,71 @@ func (s *Store) archiveTimeFields() []string {
 	return s.opts.TimeFields
 }
 
-func (s *Store) archivePath(path string) (string, error) {
+// archiveDirectory pins each directory from the volume root to the archive.
+// The recorded identities let a writer detect a move before publishing or
+// removing anything at the operator's chosen location.
+type archiveDirectory struct {
+	root   *os.Root
+	parent *archiveDirectory
+	name   string
+	info   os.FileInfo
+	data   os.FileInfo
+}
+
+func (d *archiveDirectory) close() {
+	for ; d != nil; d = d.parent {
+		d.root.Close()
+	}
+}
+
+func (d *archiveDirectory) verify() error {
+	for ; d.parent != nil; d = d.parent {
+		current, err := d.parent.root.Lstat(d.name)
+		if err != nil || !os.SameFile(current, d.info) {
+			return fmt.Errorf("%w: directory %s moved", ErrInvalidArchive, d.root.Name())
+		}
+	}
+	return nil
+}
+
+func (d *archiveDirectory) openChild(name string) (*archiveDirectory, error) {
+	if !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." {
+		return nil, fmt.Errorf("%w: invalid directory name %q", ErrInvalidArchive, name)
+	}
+	info, err := d.root.Lstat(name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArchive, err)
+	}
+	if !info.IsDir() || os.SameFile(info, d.data) {
+		return nil, fmt.Errorf("%w: choose a directory outside the data directory without symbolic links", ErrInvalidArchive)
+	}
+	root, err := d.root.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	actual, err := root.Stat(".")
+	if err != nil || !os.SameFile(actual, info) {
+		root.Close()
+		return nil, fmt.Errorf("%w: %s changed while opening", ErrInvalidArchive, name)
+	}
+	return &archiveDirectory{root: root, parent: d, name: name, info: info, data: d.data}, nil
+}
+
+// archiveParent resolves existing aliases such as /var on macOS, then opens
+// the canonical parent one component at a time. All subsequent operations use
+// these directory handles and a single local basename.
+func (s *Store) archiveParent(path string) (*archiveDirectory, string, error) {
 	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("%w: supply an absolute path on the server", ErrInvalidArchive)
+		return nil, "", fmt.Errorf("%w: supply an absolute path on the server", ErrInvalidArchive)
 	}
 	path = filepath.Clean(path)
+	name := filepath.Base(path)
+	if !filepath.IsLocal(name) || name == "." {
+		return nil, "", fmt.Errorf("%w: invalid archive directory name", ErrInvalidArchive)
+	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%w: archive parent: %w", ErrInvalidArchive, err)
-		}
-		return "", err
-	}
-	path = filepath.Join(parent, filepath.Base(path))
-	entry, err := os.Lstat(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	if entry != nil && entry.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%w: %s is a symbolic link", ErrInvalidArchive, path)
+		return nil, "", fmt.Errorf("%w: archive parent: %w", ErrInvalidArchive, err)
 	}
 	protected := s.opts.DataDir
 	if protected == "" {
@@ -83,53 +131,86 @@ func (s *Store) archivePath(path string) (string, error) {
 	}
 	data, err := os.Stat(protected)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	// SameFile also recognizes the data directory under another spelling
-	// on a case-insensitive filesystem.
-	for dir := path; ; {
-		if os.SameFile(entry, data) {
-			return "", fmt.Errorf("%w: choose a directory outside %s", ErrInvalidArchive, protected)
+	volume := filepath.VolumeName(parent)
+	root, err := os.OpenRoot(volume + string(filepath.Separator))
+	if err != nil {
+		return nil, "", err
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		root.Close()
+		return nil, "", err
+	}
+	if os.SameFile(info, data) {
+		root.Close()
+		return nil, "", fmt.Errorf("%w: archive must be outside the data directory", ErrInvalidArchive)
+	}
+	dir := &archiveDirectory{root: root, info: info, data: data}
+	for component := range strings.SplitSeq(strings.TrimPrefix(parent, volume), string(filepath.Separator)) {
+		if component == "" {
+			continue
 		}
-		if dir == filepath.Dir(dir) {
-			return path, nil
-		}
-		dir = filepath.Dir(dir)
-		entry, err = os.Stat(dir)
+		child, err := dir.openChild(component)
 		if err != nil {
-			return "", err
+			dir.close()
+			return nil, "", err
 		}
+		dir = child
 	}
+	return dir, name, nil
+}
+
+// sync makes entries durable through the same handle used to create them.
+func (d *archiveDirectory) sync() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	f, err := d.root.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(syncFile(f), f.Close())
 }
 
 // archiveWriter reserves a destination and copies the parts of a partition
 // as they are captured. Its manifest is published only after the final batch.
 type archiveWriter struct {
 	dir       *Dir
-	root      *os.Root
+	target    *archiveDirectory
 	manifest  partitionArchive
-	written   int
+	created   map[string]os.FileInfo
 	published bool
 }
 
 func (s *Store) beginPartitionArchive(dest string, id int64) (*archiveWriter, error) {
-	dest, err := s.archivePath(dest)
+	parent, name, err := s.archiveParent(dest)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Mkdir(dest, 0o700); err != nil {
+	if err := parent.verify(); err != nil {
+		parent.close()
+		return nil, err
+	}
+	if err := parent.root.Mkdir(name, 0o700); err != nil {
+		defer parent.close()
 		if errors.Is(err, os.ErrExist) {
+			if entry, statErr := parent.root.Lstat(name); statErr == nil && (os.SameFile(entry, parent.data) || entry.Mode()&os.ModeSymlink != 0) {
+				return nil, fmt.Errorf("%w: invalid archive destination %s", ErrInvalidArchive, dest)
+			}
 			return nil, fmt.Errorf("%w: %s", ErrArchiveExists, dest)
 		}
 		return nil, err
 	}
-	root, err := os.OpenRoot(dest)
+	target, err := parent.openChild(name)
 	if err != nil {
-		os.Remove(dest)
+		// No identity was established for the entry that Mkdir created.
+		parent.close()
 		return nil, err
 	}
 	return &archiveWriter{
-		dir: s.dir, root: root,
+		dir: s.dir, target: target, created: make(map[string]os.FileInfo),
 		manifest: partitionArchive{
 			Version: 1, ID: id, Width: s.opts.Partition, SortKey: s.opts.SortKey,
 			TimeFields: s.archiveTimeFields(), PartDictionary: s.opts.Part.Dictionary,
@@ -140,22 +221,45 @@ func (s *Store) beginPartitionArchive(dest string, id int64) (*archiveWriter, er
 // close discards an incomplete export. An interruption after publication
 // but before the caller drops the partition leaves both copies.
 func (w *archiveWriter) close() {
-	if w.published {
-		w.root.Close()
+	if w.published || w.target.verify() != nil {
+		w.target.close()
 		return
 	}
-	_ = w.root.Remove(archiveManifest + tmpSuffix)
-	for i := range w.written {
-		_ = w.root.Remove(archivePartName(i))
+	for name, created := range w.created {
+		if entry, err := w.target.root.Lstat(name); err == nil && os.SameFile(created, entry) {
+			_ = w.target.root.Remove(name)
+		}
 	}
-	dest := w.root.Name()
-	w.root.Close()
-	os.Remove(dest)
+	parent, name := w.target.parent, w.target.name
+	// On Windows the directory handle must close before removal.
+	w.target.root.Close()
+	defer parent.close()
+	if entry, err := parent.root.Lstat(name); err == nil && os.SameFile(entry, w.target.info) {
+		_ = parent.root.Remove(name)
+	}
+}
+
+// create records ownership of a new archive file for cancellation cleanup.
+func (w *archiveWriter) create(name string) (*os.File, error) {
+	f, err := w.target.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	w.created[name] = info
+	return f, nil
 }
 
 // add requires a pinned snapshot containing the handles. New writes can
 // continue alongside the copy until the caller captures the final batch.
 func (w *archiveWriter) add(ctx context.Context, handles []*Handle) error {
+	if err := w.target.verify(); err != nil {
+		return err
+	}
 	for _, h := range handles {
 		w.dir.mu.Lock()
 		ref := w.dir.live[h]
@@ -163,11 +267,10 @@ func (w *archiveWriter) add(ctx context.Context, handles []*Handle) error {
 		if ref == nil {
 			return ErrUnknownPart
 		}
-		f, err := w.root.OpenFile(archivePartName(w.written), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		f, err := w.create(archivePartName(len(w.manifest.Parts)))
 		if err != nil {
 			return err
 		}
-		w.written++
 		info, err := copyArchivePart(ctx, f, bytes.NewReader(ref.data))
 		if err == nil {
 			err = syncFile(f)
@@ -181,8 +284,11 @@ func (w *archiveWriter) add(ctx context.Context, handles []*Handle) error {
 }
 
 func (w *archiveWriter) publish(ctx context.Context) error {
+	if err := w.target.verify(); err != nil {
+		return err
+	}
 	tmp := archiveManifest + tmpSuffix
-	f, err := w.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := w.create(tmp)
 	if err != nil {
 		return err
 	}
@@ -195,12 +301,30 @@ func (w *archiveWriter) publish(ctx context.Context) error {
 	if err = errors.Join(err, f.Close(), ctx.Err()); err != nil {
 		return err
 	}
-	if err := w.root.Rename(tmp, archiveManifest); err != nil {
+	if err := w.target.verify(); err != nil {
+		return err
+	}
+	for name, created := range w.created {
+		entry, err := w.target.root.Lstat(name)
+		if err != nil || !os.SameFile(entry, created) {
+			return fmt.Errorf("%w: %s changed before publication", ErrInvalidArchive, name)
+		}
+	}
+	if _, err := w.target.root.Lstat(archiveManifest); err == nil {
+		return fmt.Errorf("%w: %s", ErrArchiveExists, archiveManifest)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// The archive directory belongs to this writer. Expose the complete,
+	// synced manifest in one rename and preserve it if directory sync fails.
+	if err := w.target.root.Rename(tmp, archiveManifest); err != nil {
 		return err
 	}
 	w.published = true
-	dest := w.root.Name()
-	return errors.Join(syncDir(dest), syncDir(filepath.Dir(dest)))
+	if err := errors.Join(w.target.sync(), w.target.parent.sync()); err != nil {
+		return err
+	}
+	return w.target.verify()
 }
 
 type archiveReader struct {
@@ -244,15 +368,20 @@ func openArchiveFile(root *os.Root, name string) (*os.File, error) {
 }
 
 func (s *Store) readPartitionArchive(ctx context.Context, src string) (int64, []*PartFile, error) {
-	src, err := s.archivePath(src)
+	parent, name, err := s.archiveParent(src)
 	if err != nil {
 		return 0, nil, err
 	}
-	root, err := os.OpenRoot(src)
+	target, err := parent.openChild(name)
 	if err != nil {
-		return 0, nil, fmt.Errorf("%w: %w", ErrInvalidArchive, err)
+		parent.close()
+		return 0, nil, err
 	}
-	defer root.Close()
+	defer target.close()
+	if err := target.verify(); err != nil {
+		return 0, nil, err
+	}
+	root := target.root
 	f, err := openArchiveFile(root, archiveManifest)
 	if err != nil {
 		return 0, nil, err
