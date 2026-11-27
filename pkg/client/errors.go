@@ -14,6 +14,7 @@ const (
 	ErrCodeInvalidRequest      ErrorCode = "INVALID_REQUEST"
 	ErrCodeValidationError     ErrorCode = "VALIDATION_ERROR"
 	ErrCodeNotFound            ErrorCode = "NOT_FOUND"
+	ErrCodeConflict            ErrorCode = "CONFLICT"
 	ErrCodeTooManyRequests     ErrorCode = "TOO_MANY_REQUESTS"
 	ErrCodeAuthRequired        ErrorCode = "AUTH_REQUIRED"
 	ErrCodeInvalidToken        ErrorCode = "INVALID_TOKEN"
