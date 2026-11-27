@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/ir/opt"
 )
 
 // QueryPage reads up to bound output rows. If a job needs the complete
@@ -68,8 +69,8 @@ func pagePlan(plan *ir.Plan, bound int) (*ir.Plan, int64) {
 			if capRows <= int64(bound) {
 				return nil, 0
 			}
-			if s, ok := plan.Root.(*ir.Sort); ok {
-				return &ir.Plan{Root: &ir.TopN{Input: s.Input, Keys: s.Keys, Count: int64(bound)}}, capRows
+			if top, ok := opt.BoundSort(plan.Root, int64(bound)); ok {
+				return &ir.Plan{Root: top}, capRows
 			}
 			return &ir.Plan{Root: &ir.Limit{Input: plan.Root, Count: int64(bound)}}, capRows
 		default:

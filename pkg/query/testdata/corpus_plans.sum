@@ -27,10 +27,10 @@ ed5e4c394f12070d	source=accounts | bin age minspan=101 | fields age | head 1
 9c071fc76ac5dec2	source=accounts | bin age start=0 end=101 | fields age | head 1
 a7de50aff3e0a563	source=accounts | bin balance start=0 end=100001 | fields balance | head 1
 07b59ff7fab5fed4	source=accounts | bin age span=1 start=25 end=35 | fields age | head 6
-fb028c1305439987	source=time_test | bin @timestamp span=1h | fields @timestamp, value | head 3
-b75e8478af20e041	source=time_test | bin @timestamp span=45minute | fields @timestamp, value | head 3
-3039c2db5afeb491	source=time_test | bin @timestamp span=30seconds | fields @timestamp, value | head 3
-650bce99581b6d7f	source=time_test | bin @timestamp span=7day | fields @timestamp, value | head 3
+f0abc309adef4227	source=time_test | bin @timestamp span=1h | fields @timestamp, value | head 3
+335bb28b93c606db	source=time_test | bin @timestamp span=45minute | fields @timestamp, value | head 3
+9268e9b990fccfa3	source=time_test | bin @timestamp span=30seconds | fields @timestamp, value | head 3
+48d8efa4f8e53317	source=time_test | bin @timestamp span=7day | fields @timestamp, value | head 3
 86e503073e5aab44	source=time_test | bin @timestamp span=2h aligntime='@d+3h' | fields @timestamp, value | head 3
 149b68e0fe895d1b	source=time_test | bin @timestamp span=2h aligntime=1500000000 | fields @timestamp, value | head 3
 494178f0c428e551	source=accounts | bin age | fields age, account_number | head 3
@@ -41,15 +41,15 @@ e89fd048d28382d1	source=accounts | eval age_str = CAST(age AS STRING) | bin age_
 4fb52ec28ea1f1b3	source=otellogs | chart limit=top1 useother=true otherstr='other_services' count() over severityText by `resource.attributes.service.name`
 d79c08a5932f7caa	source=otellogs | chart usenull=true nullstr='not instrumented' count() over `resource.attributes.service.name` by instrumentationScope.name
 1eb9ccf6cdbe27e8	source=otellogs | chart max(severityNumber) by severityNumber span=10, `resource.attributes.host.name`
-a147d1c2e542c088	source=accounts | convert auto(balance) | fields account_number, balance | head 3
+5b29e2bcb512f56a	source=accounts | convert auto(balance) | fields account_number, balance | head 3
 61566fb68523140a	source=accounts | eval price='1,234' | convert num(price) | fields price
 00686a3fde26b187	source=system_metrics | eval memory='100m' | convert memk(memory) | fields memory
-98061362cc1f034d	source=accounts | convert auto(balance), num(age) | fields account_number, balance, age | head 3
-577773ea9d01068b	source=accounts | convert auto(balance) AS balance_num | fields account_number, balance, balance_num | head 3
+147afe1843d011e9	source=accounts | convert auto(balance), num(age) | fields account_number, balance, age | head 3
+a76edf968c9f4513	source=accounts | convert auto(balance) AS balance_num | fields account_number, balance, balance_num | head 3
 7216adda8a191853	source=accounts | head 1 | eval duration='2.000 sec' | convert rmunit(duration) | fields duration
 ef7fc8a6983048fa	source=accounts | convert auto(age) | stats sum(age) by gender
-dd5557e51d8634c0	source=accounts | convert auto(balance), num(age), none(account_number) | fields account_number, balance, age | head 3
-2a8d247ece43c47a	source=accounts | convert none(account_number) AS account_id | fields account_id, firstname, lastname | head 3
+ac4c5ed2cce598b4	source=accounts | convert auto(balance), num(age), none(account_number) | fields account_number, balance, age | head 3
+b91f8a62829d0864	source=accounts | convert none(account_number) AS account_id | fields account_id, firstname, lastname | head 3
 b547ee06ee6f78da	source=accounts | eval timestamp = 1066507633 | convert ctime(timestamp) | fields timestamp
 60262506f7b218aa	source=accounts | eval date_str = '10/18/2003 20:07:13' | convert mktime(date_str) | fields date_str
 02deabf0da612997	source=accounts | eval timestamp = 1066507633 | convert timeformat="%Y-%m-%d %H:%M:%S" ctime(timestamp) | fields timestamp
@@ -57,7 +57,7 @@ f8710fc80aca2367	source=accounts | eval date_str = '2000-01-01 00:00:00' | conve
 d5f9a87107169498	source=accounts | eval duration = '01:23:45' | convert dur2sec(duration) | fields duration
 2733a016a12351b6	source=accounts | eval time_str = '03:45.5' | convert mstime(time_str) | fields time_str
 16027eeba16caff3	source=otellogs | where severityText IN ('ERROR', 'WARN') | dedup `resource.attributes.service.name` | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityText, body
-5acf3d9d3df24ee2	source=otellogs | dedup 2 severityText | sort severityNumber | fields severityText, severityNumber | head 6
+99e912466040e684	source=otellogs | dedup 2 severityText | sort severityNumber | fields severityText, severityNumber | head 6
 f49e452513ded144	source=otellogs | dedup instrumentationScope.name | fields instrumentationScope.name | sort instrumentationScope.name
 f49e452513ded144	source=otellogs | dedup instrumentationScope.name | fields instrumentationScope.name | sort instrumentationScope.name
 9ac2373462bf847c	source=otellogs | sort severityNumber, `resource.attributes.service.name` | dedup severityText consecutive=true | fields severityText, `resource.attributes.service.name`
@@ -65,8 +65,8 @@ d2412d0582988378	describe accounts
 05f8a28530fec96e	describe accounts | where TYPE_NAME="bigint" | fields COLUMN_NAME
 b3e9989c8758ea77	source=otellogs | eval is_critical = IF(severityNumber >= 17, 'yes', 'no') | dedup severityText | sort severityNumber | fields severityText, is_critical
 980e9c4a5727e4fc	source=otellogs | eval is_error = severityNumber >= 17, is_traced = LENGTH(traceId) > 0 | where is_error = true | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, is_error, is_traced
-5b801d4a4b4a7bf7	source=otellogs | where severityText IN ('ERROR', 'WARN') | eval formatted = '[' + severityText + '] ' + body | sort severityNumber, `resource.attributes.service.name` | fields formatted | head 3
-bb5a32a78da2a676	source=otellogs | eventstats count() as service_total by `resource.attributes.service.name` | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, service_total, body | head 3
+ffe76b938a4c5a03	source=otellogs | where severityText IN ('ERROR', 'WARN') | eval formatted = '[' + severityText + '] ' + body | sort severityNumber, `resource.attributes.service.name` | fields formatted | head 3
+288f3f04730d07f4	source=otellogs | eventstats count() as service_total by `resource.attributes.service.name` | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, service_total, body | head 3
 785b7ce6667093df	source=otellogs | where severityText = 'ERROR' | eventstats avg(severityNumber) as avg_sev, count() as error_count by `resource.attributes.service.name` | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityNumber, avg_sev, error_count
 77a9f1c7561bfc93	source=otellogs | eventstats bucket_nullable=false count() as scope_count by instrumentationScope.name | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, `instrumentationScope.name`, scope_count
 499013eff7ab42fe	source=otellogs | where severityText = 'WARN' | stats list(`resource.attributes.service.name`) as services by severityText | expand services as service | fields severityText, service
@@ -77,14 +77,14 @@ f2828e84f1bcf1e0	explain source=state_country | where country = 'USA' OR country
 5ec7ec9a8464dc56	explain extended source=state_country | where country = 'USA' OR country = 'England' | stats count() by country
 433815056d373ad9	source=otellogs | where severityText IN ('ERROR', 'WARN') | fieldformat is_critical = IF(severityNumber >= 21, 'CRITICAL', 'ERROR') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, is_critical | head 4
 10ade9d289f75bdc	source=otellogs | dedup severityText | sort severityNumber | fieldformat severityNumber = CASE(severityNumber < 9, 'low', severityNumber < 17, 'medium', severityNumber >= 17, 'high') | fields severityText, severityNumber
-9ea495a68290444c	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 3
-cc742d08cc61fd24	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, severityNumber, body | fields - body, severityNumber | head 3
-189817f7063a4134	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severity* | head 3
-ee3c5a62c4b37f38	source=otellogs | where LENGTH(traceId) > 0 | fields *Id | head 3
-f1aa649b12b1b056	source=otellogs | where LENGTH(traceId) > 0 | fields severityText, *Id | head 3
-44b9e4b0c628fca4	source=otellogs | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields - *Id | head 1
-3b67ff4c0d6a7728	source=otellogs | fields severityText, severity* | head 3
-7fd7dc11dce64b70	source=otellogs | where severityText = 'WARN' | fields `*` | head 1
+0330bb4c2c50b8aa	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 3
+a01208e43da84464	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, severityNumber, body | fields - body, severityNumber | head 3
+ee50d713ac8b611c	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severity* | head 3
+e3f45eeeebcd6074	source=otellogs | where LENGTH(traceId) > 0 | fields *Id | head 3
+04cb5fcd364742b6	source=otellogs | where LENGTH(traceId) > 0 | fields severityText, *Id | head 3
+72ea2e0cf3429bc4	source=otellogs | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields - *Id | head 1
+b95aaa726dfc80ce	source=otellogs | fields severityText, severity* | head 3
+59079e293aa12a78	source=otellogs | where severityText = 'WARN' | fields `*` | head 1
 4068b2d6c04cd412	source=otellogs | where severityText IN ('ERROR', 'WARN') | fields severityText, `resource.attributes.service.name`, instrumentationScope.name | fillnull using instrumentationScope.name = 'unknown' | sort `resource.attributes.service.name`
 22b22007b1e7c65d	source=otellogs | where severityText = 'ERROR' | fields severityText, `resource.attributes.service.name`, instrumentationScope.name | fillnull value='unknown' instrumentationScope.name | sort `resource.attributes.service.name`
 51623ce93bf25d94	source=otellogs | where NOT ISNULL(instrumentationScope.name) | flatten instrumentationScope | fields severityText, name, version
@@ -108,10 +108,10 @@ ae8e0549420600fc	graphLookup employees start='Eliot' edge=reportsTo-->name as re
 f54e1ef1c959af4d	graphLookup employees start='Eliot' edge=reportsTo-->name depthField=level as reportingHierarchy
 2e0a2f4d2a8bec40	source=apache | grok message '%{COMMONAPACHELOG}' | fields COMMONAPACHELOG, timestamp, response, bytes
 8cab7690d7275076	source=otellogs | where LIKE(body, '%HTTP/1.1%') | grok body '\[%{DATA:ts}\] \"%{WORD:method} %{DATA:path} HTTP/%{DATA:ver}\" %{POSINT:status}' | fields method, path, status
-2d2135db26a25fb8	source=otellogs | where LIKE(body, '%ms%') | grok body '%{NUMBER:duration}ms' | fields body, duration | head 3
-216853b449112ff9	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head
-66c79ea6a6380ed0	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 3
-6baaccf82d598323	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 3 from 2
+06e99909ac77d39e	source=otellogs | where LIKE(body, '%ms%') | grok body '%{NUMBER:duration}ms' | fields body, duration | head 3
+92a6d62478cc1da9	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head
+5469a42368b55eb2	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 3
+a44c239ecaf46ce8	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 3 from 2
 40d35abc9b43cf70	source = state_country | inner join left=a right=b ON a.name = b.name occupation | stats avg(salary) by span(age, 10) as age_span, b.country
 e170bc2ab4242357	source = state_country as a | where country = 'USA' OR country = 'England' | left join ON a.name = b.name [ source = occupation | where salary > 0 | fields name, country, salary | sort salary | head 3 ] as b | stats avg(salary) by span(age, 10) as age_span, b.country
 783f3be7672b8257	source = state_country | where country = 'USA' OR country = 'England' | join type=left overwrite=true name [ source = occupation | where salary > 0 | fields name, country, salary | sort salary | head 3 ] | stats avg(salary) by span(age, 10) as age_span, country
@@ -144,14 +144,14 @@ d606ac65d2fee525	| multisearch [search source=time_data | where category IN ("A"
 699e5f1c92b684c8	source=mvcombine_data | where bytes=700 and tags='t7' | fields ip, bytes, tags, packets_str | sort ip, packets_str | mvcombine packets_str | sort ip
 aa0572ed5ff9d30b	source=mvcombine_data | where ip='10.0.0.3' and bytes=300 and tags='t3' | fields ip, bytes, tags, packets_str | mvcombine packets_str
 a29d17ed5c5bb362	source=mvcombine_data | mvcombine does_not_exist
-ef72a6e692491d8a	source=people | eval tags = array('error', 'warning', 'info') | fields tags | head 1 | mvexpand tags | fields tags
-773b7c564b21334f	source=people | eval ids = array(1, 2, 3, 4, 5) | fields ids | head 1 | mvexpand ids limit=3 | fields ids
+172a6ead57a1e7ae	source=people | eval tags = array('error', 'warning', 'info') | fields tags | head 1 | mvexpand tags | fields tags
+4dcb19646f0f7a85	source=people | eval ids = array(1, 2, 3, 4, 5) | fields ids | head 1 | mvexpand ids limit=3 | fields ids
 5fb8922ebc0edfe0	source=people | head 1 | fields projects | mvexpand projects | fields projects.name
-288e79cccd2d9c34	source=people | eval tags = array('error') | fields tags | head 1 | mvexpand tags | fields tags
-da35fd45703a19f4	source=people | eval some_field = 'x' | fields some_field | head 1 | mvexpand tags | fields tags
+aae4620205e87db0	source=people | eval tags = array('error') | fields tags | head 1 | mvexpand tags | fields tags
+26bd650d31949e78	source=people | eval some_field = 'x' | fields some_field | head 1 | mvexpand tags | fields tags
 9625736056518498	source=otellogs | where severityText = 'ERROR' | stats list(`resource.attributes.service.name`) as affected_services by severityText | nomv affected_services | fields severityText, affected_services
-3247e86b446eaedf	source=otellogs | where severityText = 'ERROR' | fields errmsg, detail | head 3
-774ed7b0b4c4c223	source=otellogs | where `resource.attributes.service.name` = 'frontend' | fields body, sourceip | head 3
+9a581e6069595d1d	source=otellogs | where severityText = 'ERROR' | fields errmsg, detail | head 3
+4096419bdd2cf801	source=otellogs | where `resource.attributes.service.name` = 'frontend' | fields body, sourceip | head 3
 9737e37d9d535eba	source=otellogs | where severityText = 'ERROR' | patterns body method=simple_pattern | fields body, patterns_field | head 3
 e451f5e947b437d5	source=apache | patterns message method=simple_pattern | fields message, patterns_field
 8af39767336a4cec	source=apache | patterns message method=simple_pattern new_field='no_numbers' pattern='[0-9]' | fields message, no_numbers
@@ -170,18 +170,18 @@ d82f7b6e5d9fd44f	source=otellogs | rare showcount=false severityText by `resourc
 2c4c0c89d9eb5257	source=otellogs | rare usenull=false instrumentationScope.name
 3f325539a193b5d9	source=otellogs | rare usenull=true instrumentationScope.name
 0aac36d0747b0330	source=otellogs | where severityText = 'ERROR' | regex body=".*timeout.*" | fields severityText, `resource.attributes.service.name`, body
-a883c15c1727fb39	source=otellogs | where severityText = 'ERROR' | regex body!=".*timeout.*" | fields severityText, `resource.attributes.service.name`, body | head 3
+808dd97723c0813f	source=otellogs | where severityText = 'ERROR' | regex body!=".*timeout.*" | fields severityText, `resource.attributes.service.name`, body | head 3
 8494938d08a2c965	source=otellogs | where severityText = 'WARN' | regex `resource.attributes.service.name`=".*catalog$" | fields severityText, `resource.attributes.service.name`, body
-e2d7f2f5bc4437ce	source=otellogs | where severityText = 'ERROR' | regex body="[A-Z][a-zA-Z]+\\.[a-zA-Z]+" | fields severityText, body | head 3
+5b32def5c68f8406	source=otellogs | where severityText = 'ERROR' | regex body="[A-Z][a-zA-Z]+\\.[a-zA-Z]+" | fields severityText, body | head 3
 dfe7f14016abe923	source=otellogs | regex severityText="error" | fields severityText
-0c3ef0d6d56e2be2	source=otellogs | rename severityText as severity | fields severity | head 4
-5464a8bdd0c103dc	source=otellogs | rename severityText as severity, `resource.attributes.service.name` as service | fields severity, service | head 4
-afdd82b66aa9ba7e	source=otellogs | rename severity* as sev* | fields sevText, sevNumber | head 4
-be074c66564ad2c0	source=otellogs | rename severity* as sev*, `@*` as otel_* | fields sevText, sevNumber, otel_timestamp | head 4
-0ffa1a6e2701733e	source=otellogs | rename severityText as body | fields body | head 4
-5869c448c05567d6	source=otellogs | replace "product-catalog" WITH "product catalog" IN `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityText | head 5
-b5fa13ac2b7121bc	source=otellogs | replace "ERROR" WITH "Error", "WARN" WITH "Warning" IN severityText | fields severityText, `resource.attributes.service.name` | head 5
-d299d5ad1d9cae03	source=otellogs | where severityText = 'ERROR' | replace "frontend-proxy" WITH "frontend proxy" IN `resource.attributes.service.name` | fields `resource.attributes.service.name`, body | head 3
+770fe563ecca954e	source=otellogs | rename severityText as severity | fields severity | head 4
+f0f049e2027afad2	source=otellogs | rename severityText as severity, `resource.attributes.service.name` as service | fields severity, service | head 4
+727ecb98a294edfe	source=otellogs | rename severity* as sev* | fields sevText, sevNumber | head 4
+da404c34a942cf72	source=otellogs | rename severity* as sev*, `@*` as otel_* | fields sevText, sevNumber, otel_timestamp | head 4
+423015faa9712cda	source=otellogs | rename severityText as body | fields body | head 4
+b50b163102f366f4	source=otellogs | replace "product-catalog" WITH "product catalog" IN `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityText | head 5
+30df40d567f7d914	source=otellogs | replace "ERROR" WITH "Error", "WARN" WITH "Warning" IN severityText | fields severityText, `resource.attributes.service.name` | head 5
+e09a29874a7b2bf1	source=otellogs | where severityText = 'ERROR' | replace "frontend-proxy" WITH "frontend proxy" IN `resource.attributes.service.name` | fields `resource.attributes.service.name`, body | head 3
 f069ad7a25ec9e92	source=accounts | replace "IL" WITH "Illinois", "TN" WITH "Tennessee" IN state | fields state
 c7da343d9c2f53df	source=accounts | where LIKE(address, '%Holmes%') | replace "Holmes" WITH "HOLMES" IN address | fields address, state, gender, age, city
 b012467fbc2c29d3	source=accounts | replace "*IL" WITH "Illinois" IN state | fields state
@@ -192,45 +192,45 @@ a8b0b55584da7250	source=accounts | replace "* Lane" WITH "Lane *" IN address | f
 c425b96a131ac4f5	source=accounts | eval note = 'price: *sale*' | replace 'price: \*sale\*' WITH 'DISCOUNTED' IN note | fields note
 b7f7ac0e046d621d	source=accounts | eval label = 'file123.txt' | replace 'file*.*' WITH '\**.*' IN label | fields label
 5b88108c3497cd9d	| rest '/_cluster/health' | eval status = json_extract(response, 'status'), number_of_nodes = json_extract(response, 'number_of_nodes') | fields status, number_of_nodes
-7a46b1443ff1e8a4	source=otellogs | fields severityText, `resource.attributes.service.name` | head 5 | reverse
-8e15b2f3d8820e1e	source=otellogs | sort severityNumber | fields severityText, severityNumber | head 5 | reverse
+edcb6f91619a0528	source=otellogs | fields severityText, `resource.attributes.service.name` | head 5 | reverse
+b1be22cf40b46f0c	source=otellogs | sort severityNumber | fields severityText, severityNumber | head 5 | reverse
 b5dfeb38dc7aa4c5	source=otellogs | reverse | head 2 | fields severityText, `resource.attributes.service.name`
 dfc1e5ba5d444288	source=otellogs | reverse | reverse | fields severityText, `resource.attributes.service.name` | head 5
 a82cc8cf3079c20b	source=otellogs | where severityText = 'ERROR' | fields severityText, `resource.attributes.service.name` | reverse
-60b08376d63a8143	source=otellogs | where severityText = 'ERROR' | fields body, errtype | head 3
+7ee8417f15217659	source=otellogs | where severityText = 'ERROR' | fields body, errtype | head 3
 d2f2c48aa8cd4d94	source=otellogs | where severityText = 'WARN' | fields body, word
 c4897135b5698512	source=otellogs | where LIKE(body, '%authenticated%') OR LIKE(body, '%credentials%') | rex field=body mode=sed "s/[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+/xxx.xxx.xxx.xxx/" | fields body
 58f7deb9327e09ca	source=otellogs | where severityText = 'ERROR' | where NOT ISNULL(errtype) | fields body, errtype, pos
 7e108dbc5047978c	source=otellogs | head 3
-75f18c8824d1aa51	search ERROR source=otellogs | sort `resource.attributes.service.name` | fields severityText, body | head 1
-71f9d5f38720778c	search "Payment failed" source=otellogs | sort `resource.attributes.service.name` | fields body | head 1
+0750b1840b4cdebf	search ERROR source=otellogs | sort `resource.attributes.service.name` | fields severityText, body | head 1
+394b516626f89744	search "Payment failed" source=otellogs | sort `resource.attributes.service.name` | fields body | head 1
 bcb0966952e38e2b	search connection timeout source=otellogs | fields body
 3c213918cef2dd1b	search "connection timeout" OR "heap space" source=otellogs | sort `resource.attributes.service.name` | fields body
 9a214b40f519d1a5	search severityText="ERROR" OR severityText="WARN" source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`
-7db27e7a2002cf28	search severityText="INFO" AND `resource.attributes.service.name`="cart" source=otellogs | fields body | head 1
-cd587d177a93c3c0	search severityText="ERROR" OR severityText="WARN" AND severityNumber>15 source=otellogs | fields severityText, severityNumber | head 2
+edfd9f2a5d13e53c	search severityText="INFO" AND `resource.attributes.service.name`="cart" source=otellogs | fields body | head 1
+b49b871e4232ce92	search severityText="ERROR" OR severityText="WARN" AND severityNumber>15 source=otellogs | fields severityText, severityNumber | head 2
 1584f80ead59cc76	search instrumentationScope.name!="@opentelemetry/instrumentation-http" source=otellogs | fields instrumentationScope.name
-cd9c440237dbb79b	search NOT instrumentationScope.name="@opentelemetry/instrumentation-http" source=otellogs | fields instrumentationScope.name | head 5
-93f985c7f04a88a0	search severityNumber>13 AND severityNumber<=21 source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityNumber | head 3
-acf75e6929aae0f9	search severityText=ERR* source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityText | head 3
-0d200f2c61373d33	search body=connection* source=otellogs | sort `resource.attributes.service.name` | fields body | head 2
-f157fd5e74c5a934	search severityText="ERR?R" source=otellogs | fields severityText, `resource.attributes.service.name` | head 3
-887114b3a0afcca9	search `resource.attributes.service.name`=payment* source=otellogs | fields severityText, `resource.attributes.service.name`, body | head 2
+ff495af3853fdecb	search NOT instrumentationScope.name="@opentelemetry/instrumentation-http" source=otellogs | fields instrumentationScope.name | head 5
+24f23f9e02b415e0	search severityNumber>13 AND severityNumber<=21 source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityNumber | head 3
+33c4827d4f768617	search severityText=ERR* source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityText | head 3
+4a6bfa3163cf5e51	search body=connection* source=otellogs | sort `resource.attributes.service.name` | fields body | head 2
+3cc0fe230a7f200c	search severityText="ERR?R" source=otellogs | fields severityText, `resource.attributes.service.name` | head 3
+76c40f7cd4f4b64d	search `resource.attributes.service.name`=payment* source=otellogs | fields severityText, `resource.attributes.service.name`, body | head 2
 3a53e343cad3798c	search firstname=A* AND age>30 source=accounts | fields firstname, age, city
 8b851b7258d6956d	search severityText IN ("ERROR", "WARN") source=otellogs | fields severityText, `resource.attributes.service.name`
 75a0cccc1ee4e086	search severityNumber=17 source=otellogs | fields body, `resource.attributes.service.name`
-3c43bf8be34ad229	search (severityText="ERROR" OR severityText="WARN") AND severityNumber>13 source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityText | head 3
+454a64888e0d6947	search (severityText="ERROR" OR severityText="WARN") AND severityNumber>13 source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityText | head 3
 296166a054cfa687	search earliest='2024-02-01 09:13:00' latest='2024-02-01 09:16:00' source=otellogs | sort severityNumber | fields `@timestamp`, severityText
-36d29b27e9c1e1c1	search latest=-30s source=otellogs | sort severityNumber | fields `@timestamp`, severityText | head 3
-674fcf97b6c76481	search latest='@m' source=otellogs | sort severityNumber | fields `@timestamp`, severityText | head 2
+98a2ee7e118b74ad	search latest=-30s source=otellogs | sort severityNumber | fields `@timestamp`, severityText | head 3
+303b3c93f66ba237	search latest='@m' source=otellogs | sort severityNumber | fields `@timestamp`, severityText | head 2
 f24a081c37411b07	search earliest=1706778600 latest=1706778960 source=otellogs | sort severityNumber | fields `@timestamp`, severityText
 77e47a4db5f050ac	show datasources | where CONNECTOR_TYPE='PROMETHEUS'
-19a6bb8936bdd6c8	source=otellogs | sort severityNumber | fields severityText, severityNumber, `resource.attributes.service.name` | head 4
+36cce00c7806198e	source=otellogs | sort severityNumber | fields severityText, severityNumber, `resource.attributes.service.name` | head 4
 d63f8da865c03a90	source=otellogs | dedup severityText | sort - severityNumber | fields severityText, severityNumber
 af759e9041b811ea	source=otellogs | dedup severityText | sort severityNumber desc | fields severityText, severityNumber
-748e8a95d07f1020	source=otellogs | dedup severityText, `resource.attributes.service.name` | sort + severityNumber, - `resource.attributes.service.name` | fields severityText, severityNumber, `resource.attributes.service.name` | head 5
-548a0e982f96ca7e	source=otellogs | dedup severityText, `resource.attributes.service.name` | sort severityNumber asc, `resource.attributes.service.name` desc | fields severityText, severityNumber, `resource.attributes.service.name` | head 5
-de84efc116fdc2de	source=otellogs | sort instrumentationScope.name | fields instrumentationScope.name, severityText | head 6
+ad9a26b17d9c96fa	source=otellogs | dedup severityText, `resource.attributes.service.name` | sort + severityNumber, - `resource.attributes.service.name` | fields severityText, severityNumber, `resource.attributes.service.name` | head 5
+1034769d2046c5b4	source=otellogs | dedup severityText, `resource.attributes.service.name` | sort severityNumber asc, `resource.attributes.service.name` desc | fields severityText, severityNumber, `resource.attributes.service.name` | head 5
+05a2ca03315d35ea	source=otellogs | sort instrumentationScope.name | fields instrumentationScope.name, severityText | head 6
 6ff57858421540c4	source=otellogs | sort 3 severityNumber | fields severityText, severityNumber
 a201a84f371e3485	source=otellogs | dedup severityText | sort str(severityNumber) | fields severityText, severityNumber
 d94d454b6560c864	source=structured | spath input=doc_n n | fields doc_n n
@@ -317,7 +317,7 @@ fe224eb6d72860ed	source = [ source = customer | where substring(c_phone, 1, 2) i
 3b836aa723deb1ec	search source=otellogs | where severityText = 'ERROR' | fields severityText, `resource.attributes.service.name`
 c5cb9ef0984cf662	source=otellogs | head 5 | fields severityText, `resource.attributes.service.name`, body
 3f219b0d2259d7b7	source=otellogs severityText = 'ERROR' AND `resource.attributes.service.name` = 'payment' | fields severityText, `resource.attributes.service.name`, body
-ca0e208418fcee7e	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | table severityText `resource.attributes.service.name` body | head 3
+257799821b0b2cb4	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort - severityNumber, `resource.attributes.service.name` | table severityText `resource.attributes.service.name` body | head 3
 4736fbe694b4b91f	source=otellogs | timechart timefield=@timestamp span=5m count()
 44d9079641c5f22d	source=otellogs | where severityText = 'ERROR' | timechart timefield=@timestamp span=10m count() by `resource.attributes.service.name`
 4293a460d920a93a	source=otellogs | timechart timefield=@timestamp span=15m limit=3 count() by `resource.attributes.service.name`
@@ -355,10 +355,10 @@ b4cddd94a2541760	| union [search source=accounts | where age < 30 | eval age_gro
 fb319d4dadb2af01	| union [search source=accounts | where balance > 20000 | eval query_type = "high_balance" | fields firstname, balance, query_type] [search source=accounts | where balance > 0 AND balance <= 20000 | eval query_type = "regular" | fields firstname, balance, query_type] | sort balance desc
 2accb5a626ef9b39	source=otellogs | where severityNumber > 9 | sort severityNumber, `resource.attributes.service.name` | fields severityText, severityNumber, `resource.attributes.service.name`
 e9ace3d4a2352611	source=otellogs | where severityNumber >= 17 AND `resource.attributes.service.name` = 'payment' | fields severityText, severityNumber, `resource.attributes.service.name`
-e2ec576d16c49444	source=otellogs | where severityText = 'WARN' or severityText = 'ERROR' | fields severityText, `resource.attributes.service.name`, body | head 5
-e5e014fbe66fc4ba	source=otellogs | where LIKE(`resource.attributes.service.name`, 'frontend%') | fields severityText, `resource.attributes.service.name`, body | head 3
-d5c2fb7961bd3b52	source=otellogs | where LIKE(`resource.attributes.service.name`, '%product%') | fields severityText, `resource.attributes.service.name`, body | head 3
-4b3b0c7624236fd2	source=otellogs | where NOT severityText IN ('INFO', 'DEBUG') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 4
+97211dcab624ec82	source=otellogs | where severityText = 'WARN' or severityText = 'ERROR' | fields severityText, `resource.attributes.service.name`, body | head 5
+29ad4fb17ef66274	source=otellogs | where LIKE(`resource.attributes.service.name`, 'frontend%') | fields severityText, `resource.attributes.service.name`, body | head 3
+28492b97f3dfd054	source=otellogs | where LIKE(`resource.attributes.service.name`, '%product%') | fields severityText, `resource.attributes.service.name`, body | head 3
+16d2e2d153939eb0	source=otellogs | where NOT severityText IN ('INFO', 'DEBUG') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body | head 4
 4ad8c89bf798861f	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, body
 4db9c05f9291cde1	source=otellogs | where NOT ISNULL(instrumentationScope.name) | fields severityText, instrumentationScope.name
 51708cbaa31f2e03	source=otellogs | where (severityText = 'ERROR' OR severityText = 'WARN') AND `resource.attributes.service.name` = 'payment' | sort severityNumber | fields severityText, `resource.attributes.service.name`, body
@@ -394,52 +394,52 @@ ed1344679f3f3386	source=accounts | stats median(age)
 e534b3c3095846ed	source=accounts | stats last(firstname) by gender
 d544c66d4207c80e	source=accounts | stats list(firstname)
 29688bb0fb445504	source=accounts | stats values(firstname)
-3c1725df0e85f5aa	source=people | eval array = array(1, 2, 3) | fields array | head 1
-c7f21ea0ab64127b	source=people | eval array = array(1, "demo") | fields array | head 1
-e3c0fd566c37a69e	source=people | eval array = array(1, 2, 3) | eval length = array_length(array) | fields length | head 1
-8e0c3a6b40358b75	source=people | eval array = array(1, 2, 3), result = forall(array, x -> x > 0) | fields result | head 1
-af5a5db71d724ac5	source=people | eval array = array(-1, -2, 3), result = exists(array, x -> x > 0) | fields result | head 1
-2bc63b2bde4c91b1	source=people | eval array = array(1, -2, 3), result = filter(array, x -> x > 0) | fields result | head 1
-3e8f5566f08c3ce5	source=people | eval array = array(1, -2, 3), result = transform(array, x -> x + 2) | fields result | head 1
-7e58fcc1ff99ce4a	source=people | eval array = array(1, -2, 3), result = transform(array, (x, i) -> x + i) | fields result | head 1
-d4a2f7ef7b176e30	source=people | eval array = array(1, -2, 3), result = reduce(array, 10, (acc, x) -> acc + x) | fields result | head 1
-42362ee5cebc94f9	source=people | eval array = array(1, -2, 3), result = reduce(array, 10, (acc, x) -> acc + x, acc -> acc * 10) | fields result | head 1
-644dafd4b2d06d6f	source=people | eval result = mvjoin(array('a', 'b', 'c'), ',') | fields result | head 1
-15a884fc857da394	source=accounts | eval names_array = array(firstname, lastname) | eval result = mvjoin(names_array, ', ') | fields result | head 1
-ed57af87fdb6bb38	source=people | eval result = mvappend(1, 1, 3) | fields result | head 1
-dc70a22da1b5dd12	source=people | eval result = mvappend(1, array(2, 3)) | fields result | head 1
-eae355057e54ddea	source=people | eval result = mvappend(mvappend(1, 2), 3) | fields result | head 1
-62035e1c1e027f22	source=people | eval result = mvappend(42) | fields result | head 1
-d4442495574367ba	source=people | eval result = mvappend(nullif(1, 1), 2) | fields result | head 1
-f4ba0e41389cc3bd	source=people | eval result = mvappend(nullif(1, 1)) | fields result | head 1
-0b6c3f01e0d94a9d	source=people | eval arr1 = array(1, 2), arr2 = array(3, 4), result = mvappend(arr1, arr2) | fields result | head 1
-2ea6b2290aacbd64	source=accounts | eval result = mvappend(firstname, lastname) | fields result | head 1
-17de78534ddd2157	source=people | eval result = mvappend(1, 'text', 2.5) | fields result | head 1
-09d39e01d460f754	source=people | eval test = 'buttercup;rarity;tenderhoof;dash', result = split(test, ';') | fields result | head 1
-73294f79c88befe2	source=people | eval test = '1a2b3c4def567890', result = split(test, 'def') | fields result | head 1
-04b76534006bc31c	source=people | eval test = 'abcd', result = split(test, '') | fields result | head 1
-4496dc957fb7779c	source=people | eval test = 'name::value', result = split(test, '::') | fields result | head 1
-b3d41e868b9b6856	source=people | eval test = 'hello', result = split(test, ',') | fields result | head 1
-5bc86ed8b042fbf9	source=people | eval array = array(1, 2, 2, 3, 1, 4), result = mvdedup(array) | fields result | head 1
-55180ffadddd75d7	source=people | eval array = array('z', 'a', 'z', 'b', 'a', 'c'), result = mvdedup(array) | fields result | head 1
-c22816ee4cc2e0b3	source=people | eval array = array(), result = mvdedup(array) | fields result | head 1
-fc9704760a9e3fb9	source=people | eval array = array('apple', 'banana', 'apricot'), result = mvfind(array, 'ban.*') | fields result | head 1
-3f42874569587a81	source=people | eval array = array('cat', 'dog', 'bird'), result = mvfind(array, 'fish') | fields result | head 1
-d8370f21020ca8fb	source=people | eval array = array('error123', 'info', 'error456'), result = mvfind(array, 'error[0-9]+') | fields result | head 1
-e9adb47d70760519	source=people | eval array = array('Apple', 'Banana', 'Cherry'), result = mvfind(array, '(?i)banana') | fields result | head 1
-ccf2f2cac635694d	source=people | eval array = array('a', 'b', 'c', 'd', 'e'), result = mvindex(array, 1) | fields result | head 1
-aa5b86dba7869bc7	source=people | eval array = array('a', 'b', 'c', 'd', 'e'), result = mvindex(array, -1) | fields result | head 1
-3c7eee083740677a	source=people | eval array = array(1, 2, 3, 4, 5), result = mvindex(array, 1, 3) | fields result | head 1
-04e22ce4757f35ba	source=people | eval array = array(1, 2, 3, 4, 5), result = mvindex(array, -3, -1) | fields result | head 1
-b51adfde51e4b577	source=people | eval array = array('alex', 'celestino', 'claudia', 'david'), result = mvindex(array, 0, 2) | fields result | head 1
-118366d5dbae58a0	source=people | eval array = array(1, 2, 3), result = mvmap(array, array * 10) | fields result | head 1
-12a52893c496eb8a	source=people | eval array = array(1, 2, 3), result = mvmap(array, array + 5) | fields result | head 1
-27f0af5b741afc57	source=people | eval array = array(1, 2, 3), multiplier = 10, result = mvmap(array, array * multiplier) | fields result | head 1
-939f9cc86b0a5016	source=people | eval hosts = array('host1', 'host2'), ports = array('80', '443'), nserver = mvzip(hosts, ports, ':') | fields nserver | head 1
-8bc6208d76ff3306	source=people | eval arr1 = array('a', 'b', 'c'), arr2 = array('x', 'y', 'z'), result = mvzip(arr1, arr2, '|') | fields result | head 1
-a8d21f2a7e9c5553	source=people | eval arr1 = array('1', '2', '3'), arr2 = array('a', 'b'), result = mvzip(arr1, arr2, '-') | fields result | head 1
-c1b7b660c358c442	source=people | eval arr1 = array('a', 'b', 'c'), arr2 = array('x', 'y', 'z'), arr3 = array('1', '2', '3'), result = mvzip(mvzip(arr1, arr2, '-'), arr3, ':') | fields result | head 1
-b9c41d1721dd4e33	source=people | eval arr1 = array('a', 'b'), arr2 = array(), result = mvzip(arr1, arr2) | fields result | head 1
+b1ec49e16bae91ea	source=people | eval array = array(1, 2, 3) | fields array | head 1
+55d979d5be065269	source=people | eval array = array(1, "demo") | fields array | head 1
+030f1653a81c31bc	source=people | eval array = array(1, 2, 3) | eval length = array_length(array) | fields length | head 1
+a5d1da8b880ff4f9	source=people | eval array = array(1, 2, 3), result = forall(array, x -> x > 0) | fields result | head 1
+2191f4cd4a5f7da1	source=people | eval array = array(-1, -2, 3), result = exists(array, x -> x > 0) | fields result | head 1
+cbd735f9d0f1a76f	source=people | eval array = array(1, -2, 3), result = filter(array, x -> x > 0) | fields result | head 1
+7b078a4c14a7cf09	source=people | eval array = array(1, -2, 3), result = transform(array, x -> x + 2) | fields result | head 1
+9aaa76ce7362e83c	source=people | eval array = array(1, -2, 3), result = transform(array, (x, i) -> x + i) | fields result | head 1
+9d1adf3acc17a49c	source=people | eval array = array(1, -2, 3), result = reduce(array, 10, (acc, x) -> acc + x) | fields result | head 1
+8e053632b7e03019	source=people | eval array = array(1, -2, 3), result = reduce(array, 10, (acc, x) -> acc + x, acc -> acc * 10) | fields result | head 1
+9624a3537293d471	source=people | eval result = mvjoin(array('a', 'b', 'c'), ',') | fields result | head 1
+46ab901bc1566380	source=accounts | eval names_array = array(firstname, lastname) | eval result = mvjoin(names_array, ', ') | fields result | head 1
+8f0e81b34b9855aa	source=people | eval result = mvappend(1, 1, 3) | fields result | head 1
+5735c3944ec15d92	source=people | eval result = mvappend(1, array(2, 3)) | fields result | head 1
+3bf7d8ef25a56ee6	source=people | eval result = mvappend(mvappend(1, 2), 3) | fields result | head 1
+17b86e469fff2ef2	source=people | eval result = mvappend(42) | fields result | head 1
+5fd3fc119f849606	source=people | eval result = mvappend(nullif(1, 1), 2) | fields result | head 1
+57b3fad49248803b	source=people | eval result = mvappend(nullif(1, 1)) | fields result | head 1
+ca1bf2180339ce75	source=people | eval arr1 = array(1, 2), arr2 = array(3, 4), result = mvappend(arr1, arr2) | fields result | head 1
+5f4ebf64b2dfcce2	source=accounts | eval result = mvappend(firstname, lastname) | fields result | head 1
+66a1b8b4be211887	source=people | eval result = mvappend(1, 'text', 2.5) | fields result | head 1
+b98a45d4f52df6f2	source=people | eval test = 'buttercup;rarity;tenderhoof;dash', result = split(test, ';') | fields result | head 1
+5bb4a79e2bc088f8	source=people | eval test = '1a2b3c4def567890', result = split(test, 'def') | fields result | head 1
+2e9e61b2e2ca5880	source=people | eval test = 'abcd', result = split(test, '') | fields result | head 1
+803894ee18cb5758	source=people | eval test = 'name::value', result = split(test, '::') | fields result | head 1
+8abf234a7f3c43de	source=people | eval test = 'hello', result = split(test, ',') | fields result | head 1
+e32ba5f93ed6f1c1	source=people | eval array = array(1, 2, 2, 3, 1, 4), result = mvdedup(array) | fields result | head 1
+7dc9544a2d92c4e7	source=people | eval array = array('z', 'a', 'z', 'b', 'a', 'c'), result = mvdedup(array) | fields result | head 1
+5d09e2db8d3d94ad	source=people | eval array = array(), result = mvdedup(array) | fields result | head 1
+98f1e80bc30cc47d	source=people | eval array = array('apple', 'banana', 'apricot'), result = mvfind(array, 'ban.*') | fields result | head 1
+00b274fd67bb5bfb	source=people | eval array = array('cat', 'dog', 'bird'), result = mvfind(array, 'fish') | fields result | head 1
+1136cd9ab138b0cb	source=people | eval array = array('error123', 'info', 'error456'), result = mvfind(array, 'error[0-9]+') | fields result | head 1
+0ee1b4cf2c32ef2d	source=people | eval array = array('Apple', 'Banana', 'Cherry'), result = mvfind(array, '(?i)banana') | fields result | head 1
+76000754b7bd6c1f	source=people | eval array = array('a', 'b', 'c', 'd', 'e'), result = mvindex(array, 1) | fields result | head 1
+925cf8d3b4804477	source=people | eval array = array('a', 'b', 'c', 'd', 'e'), result = mvindex(array, -1) | fields result | head 1
+3afbeed0920576bc	source=people | eval array = array(1, 2, 3, 4, 5), result = mvindex(array, 1, 3) | fields result | head 1
+3d4ce8bf7d4e50a8	source=people | eval array = array(1, 2, 3, 4, 5), result = mvindex(array, -3, -1) | fields result | head 1
+380c8658eb96d4b3	source=people | eval array = array('alex', 'celestino', 'claudia', 'david'), result = mvindex(array, 0, 2) | fields result | head 1
+331b0c8675d8e02c	source=people | eval array = array(1, 2, 3), result = mvmap(array, array * 10) | fields result | head 1
+f5de4df050d8d1d8	source=people | eval array = array(1, 2, 3), result = mvmap(array, array + 5) | fields result | head 1
+07af1f4a3435c96d	source=people | eval array = array(1, 2, 3), multiplier = 10, result = mvmap(array, array * multiplier) | fields result | head 1
+be00e269dcfee5ca	source=people | eval hosts = array('host1', 'host2'), ports = array('80', '443'), nserver = mvzip(hosts, ports, ':') | fields nserver | head 1
+5e21fc20ea0dd86c	source=people | eval arr1 = array('a', 'b', 'c'), arr2 = array('x', 'y', 'z'), result = mvzip(arr1, arr2, '|') | fields result | head 1
+4e3d6c75c0daad31	source=people | eval arr1 = array('1', '2', '3'), arr2 = array('a', 'b'), result = mvzip(arr1, arr2, '-') | fields result | head 1
+46f97af0539f517a	source=people | eval arr1 = array('a', 'b', 'c'), arr2 = array('x', 'y', 'z'), arr3 = array('1', '2', '3'), result = mvzip(mvzip(arr1, arr2, '-'), arr3, ':') | fields result | head 1
+20390675cc0dd753	source=people | eval arr1 = array('a', 'b'), arr2 = array(), result = mvzip(arr1, arr2) | fields result | head 1
 f98e114639ad1ffa	source=accounts | eval result = isnull(employer) | fields result, employer, firstname
 06e5a1fdf3923e1a	source=accounts | eval status = if(isnull(employer), 'unemployed', 'employed') | fields firstname, employer, status
 d7823001f10b244d	source=accounts | where isnull(employer) | fields account_number, firstname, employer
@@ -466,9 +466,9 @@ e45b91ca0fc20d73	source=accounts | eval result = coalesce(nonexistent_field, fir
 16a8a47b2a04c39b	source=accounts | where ispresent(employer) | fields employer, firstname
 8fb871236153f099	source=accounts | eval temp = ifnull(employer, ' ') | eval `isblank(employer)` = isblank(employer), `isblank(temp)` = isblank(temp) | fields `isblank(temp)`, temp, `isblank(employer)`, employer
 a34a10c93766f0c1	source=accounts | eval temp = ifnull(employer, ' ') | eval `isempty(employer)` = isempty(employer), `isempty(temp)` = isempty(temp) | fields `isempty(temp)`, temp, `isempty(employer)`, employer
-d9d58e02021d2e90	source=accounts | eval now = utc_timestamp() | eval a = earliest("now", now), b = earliest("-2d@d", now) | fields a, b | head 1
+9aaf4ac6926e8cbe	source=accounts | eval now = utc_timestamp() | eval a = earliest("now", now), b = earliest("-2d@d", now) | fields a, b | head 1
 c14c28098be9a826	source=nyc_taxi | where earliest('07/01/2014:00:30:00', timestamp) | stats COUNT() as cnt
-79c29e80e40247a6	source=accounts | eval now = utc_timestamp() | eval a = latest("now", now), b = latest("+2d@d", now) | fields a, b | head 1
+bcbb3e95344440e8	source=accounts | eval now = utc_timestamp() | eval a = latest("now", now), b = latest("+2d@d", now) | fields a, b | head 1
 bb552733cff81a52	source=nyc_taxi | where latest('07/21/2014:04:00:00', timestamp) | stats COUNT() as cnt
 6c2a67b6196b6778	source=accounts | where firstname contains 'mbe' | fields firstname, age
 9703a43018a7e0b4	source=accounts | where firstname contains 'mbe'
@@ -490,10 +490,10 @@ ccdb5948ba184264	source=people | eval `cbool` = CAST(CAST(true as string) as boo
 75860f2aea873233	source=accounts | where firstname = "Amber" | eval balance_commas = tostring(balance, "commas") | fields firstname, balance_commas, balance
 2d629bdeef15b676	source=accounts | where firstname = "Amber" | eval duration = tostring(6500, "duration") | fields firstname, duration
 e2829e87f504f159	source=accounts | where firstname = "Amber" | eval `boolean_str` = tostring(1=1) | fields `boolean_str`
-94423d603fe94887	source=people | eval int_value = tonumber('010101',2) | fields int_value | head 1
-0719d6f6fc74c94f	source=people | eval int_value = tonumber('FA34',16) | fields int_value | head 1
-de9211550be1fc52	source=people | eval int_value = tonumber('4598') | fields int_value | head 1
-97b63080153fc9d4	source=people | eval double_value = tonumber('4598.678') | fields double_value | head 1
+a55548bfc9c3d0c9	source=people | eval int_value = tonumber('010101',2) | fields int_value | head 1
+0b5fb28f8696fbe5	source=people | eval int_value = tonumber('FA34',16) | fields int_value | head 1
+59669526ccfff44c	source=people | eval int_value = tonumber('4598') | fields int_value | head 1
+d7d72d65a5067ebc	source=people | eval double_value = tonumber('4598.678') | fields double_value | head 1
 2d632642ee4baca7	source=people | eval `MD5('hello')` = MD5('hello') | fields `MD5('hello')`
 3ea86114b934ce9a	source=people | eval `SHA1('hello')` = SHA1('hello') | fields `SHA1('hello')`
 e167761f752c3bcc	source=people | eval `SHA2('hello',256)` = SHA2('hello',256) | fields `SHA2('hello',256)`
@@ -608,26 +608,26 @@ f5d92fa4a840b9ac	source=accounts | where age > (25 + 5) | fields age
 bc6afce92447d04f	source=weblogs | where cidrmatch(host, '1.2.3.0/24') | fields host, url
 ce4e501f63ba6e96	source=weblogs | eval LookupResult = geoip("dataSourceName", "50.68.18.229", "country_iso_code,city_name")
 cfbfafb8a397df8d	source=json_test | where json_valid(json_string) | eval json=json(json_string) | fields test_name, json_string, json
-a3ea3f4e2b037174	source=people | eval is_valid_json = json_valid('[1,2,3,4]'), is_invalid_json = json_valid('{invalid}') | fields is_valid_json, is_invalid_json | head 1
-fa0266dc366e67ec	source=json_test | eval test_json = json_object('key', 123.45) | head 1 | fields test_json
-11dcfc8691c6bba2	source=json_test | eval test_json_array = json_array('key', 123.45) | head 1 | fields test_json_array
-2c3218935282d93c	source=json_test | eval array_length = json_array_length("[1,2,3]") | head 1 | fields array_length
-42b289f7213cbf38	source=json_test | eval array_length = json_array_length("{\"1\": 2}") | head 1 | fields array_length
-d2b2a83121e6946b	source=json_test | eval extract = json_extract('{"a": [{"b": 1}, {"b": 2}]}', 'a{}.b') | head 1 | fields extract
-0a34718f278ecc64	source=json_test | eval extract = json_extract('{"a": [{"b": 1}, {"b": 2}]}', 'a{}.b', 'a{}') | head 1 | fields extract
-c1942bf1f4fd1c5d	source=json_test | eval delete = json_delete('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b') | head 1 | fields delete
-c1c11213df2e75f2	source=json_test | eval delete = json_delete('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 'a{1}.b') | head 1 | fields delete
-914f444bd07a3bd9	source=json_test | eval delete = json_delete('{"a": [{"b": 1}, {"b": 2}]}', 'a{2}.b') | head 1 | fields delete
-a070ff12fb977058	source=json_test | eval jsonSet = json_set('{"a": [{"b": 1}]}', 'a{0}.b', 3) | head 1 | fields jsonSet
-29c2fcda718c6ea4	source=json_test | eval jsonSet = json_set('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 3, 'a{1}.b', 4) | head 1 | fields jsonSet
-057cff097169d37a	source=json_test | eval jsonAppend = json_append('{"a": [{"b": 1}]}', 'a', 3) | head 1 | fields jsonAppend
-c2625ebf83165f7c	source=json_test | eval jsonAppend = json_append('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 3, 'a{1}.b', 4) | head 1 | fields jsonAppend
-2ac56179b3ffc70e	source=json_test | eval jsonAppend = json_append('{"a": [{"b": 1}]}', 'a', '[1,2]', 'a{1}.b', 4) | head 1 | fields jsonAppend
-162d01c7079baafa	source=json_test | eval jsonExtend = json_extend('{"a": [{"b": 1}]}', 'a', 3) | head 1 | fields jsonExtend
-24438d2bca15c1dc	source=json_test | eval jsonExtend = json_extend('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 3, 'a{1}.b', 4) | head 1 | fields jsonExtend
-c54250a856da9a5a	source=json_test | eval jsonExtend = json_extend('{"a": [{"b": 1}]}', 'a', '[1,2]') | head 1 | fields jsonExtend
-8b4eb11d40eb2730	source=json_test | eval jsonKeys = json_keys('{"a": 1, "b": 2}') | head 1 | fields jsonKeys
-ca4c14bff85aa2c2	source=json_test | eval jsonKeys = json_keys('{"a": {"c": 1}, "b": 2}') | head 1 | fields jsonKeys
+ce14065fadb529ac	source=people | eval is_valid_json = json_valid('[1,2,3,4]'), is_invalid_json = json_valid('{invalid}') | fields is_valid_json, is_invalid_json | head 1
+81dcc894d03ac582	source=json_test | eval test_json = json_object('key', 123.45) | head 1 | fields test_json
+b5ffeca1f8910970	source=json_test | eval test_json_array = json_array('key', 123.45) | head 1 | fields test_json_array
+c6d62fd4f34b9676	source=json_test | eval array_length = json_array_length("[1,2,3]") | head 1 | fields array_length
+1d3de8d66b5a5c6c	source=json_test | eval array_length = json_array_length("{\"1\": 2}") | head 1 | fields array_length
+809432b6686cfaa5	source=json_test | eval extract = json_extract('{"a": [{"b": 1}, {"b": 2}]}', 'a{}.b') | head 1 | fields extract
+0da4e28562f914ac	source=json_test | eval extract = json_extract('{"a": [{"b": 1}, {"b": 2}]}', 'a{}.b', 'a{}') | head 1 | fields extract
+1af3bcf56756dc57	source=json_test | eval delete = json_delete('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b') | head 1 | fields delete
+2d7163e502a9d5d4	source=json_test | eval delete = json_delete('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 'a{1}.b') | head 1 | fields delete
+31aa6c334527b2ef	source=json_test | eval delete = json_delete('{"a": [{"b": 1}, {"b": 2}]}', 'a{2}.b') | head 1 | fields delete
+aea789b3e6c53b02	source=json_test | eval jsonSet = json_set('{"a": [{"b": 1}]}', 'a{0}.b', 3) | head 1 | fields jsonSet
+b3b5ce7fa67444e6	source=json_test | eval jsonSet = json_set('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 3, 'a{1}.b', 4) | head 1 | fields jsonSet
+23263e17561bd044	source=json_test | eval jsonAppend = json_append('{"a": [{"b": 1}]}', 'a', 3) | head 1 | fields jsonAppend
+fc3b1739110cf242	source=json_test | eval jsonAppend = json_append('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 3, 'a{1}.b', 4) | head 1 | fields jsonAppend
+7e3fd752d8b2e440	source=json_test | eval jsonAppend = json_append('{"a": [{"b": 1}]}', 'a', '[1,2]', 'a{1}.b', 4) | head 1 | fields jsonAppend
+72b1566370904e24	source=json_test | eval jsonExtend = json_extend('{"a": [{"b": 1}]}', 'a', 3) | head 1 | fields jsonExtend
+0d512ae0be585b42	source=json_test | eval jsonExtend = json_extend('{"a": [{"b": 1}, {"b": 2}]}', 'a{0}.b', 3, 'a{1}.b', 4) | head 1 | fields jsonExtend
+440f9e262b954554	source=json_test | eval jsonExtend = json_extend('{"a": [{"b": 1}]}', 'a', '[1,2]') | head 1 | fields jsonExtend
+471218f401de635e	source=json_test | eval jsonKeys = json_keys('{"a": 1, "b": 2}') | head 1 | fields jsonKeys
+a490efc8d3bff532	source=json_test | eval jsonKeys = json_keys('{"a": {"c": 1}, "b": 2}') | head 1 | fields jsonKeys
 f2bba71403b9c784	source=people | eval `ABS(-1)` = ABS(-1) | fields `ABS(-1)`
 21a48748f65b99a2	source=people | eval `ADD(2, 1)` = ADD(2, 1) | fields `ADD(2, 1)`
 0bfa509afb52fa9a	source=people | eval `SUBTRACT(2, 1)` = SUBTRACT(2, 1) | fields `SUBTRACT(2, 1)`

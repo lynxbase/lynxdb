@@ -35,7 +35,7 @@ func TestEventPagesMatchFullSortDuringFlush(t *testing.T) {
 			}
 		}
 	}
-	for _, text := range []string{"source=a,b common", "source=a,b rare", "source=a,b absentword", "source=a,b | where id % 3 = 1 | eval x = id + 1 | rename x as next | fields id, next", "source=a,b | sort - id", "source=a,b | head 13", "source=a,b | stats count() as n by index | sort index"} {
+	for _, text := range []string{"source=a,b common", "source=a,b rare", "source=a,b absentword", "source=a,b | where id % 3 = 1 | eval x = id + 1 | rename x as next | fields id, next", "source=a,b | sort - id", "source=a,b | eval _time = 0 | fields id, _time", "source=a,b | eval _time = 0 | where id < 30 | fields id", "source=a,b | head 13", "source=a,b | stats count() as n by index | sort index"} {
 		c, err := query.Compile(text)
 		if err != nil {
 			t.Fatal(err)

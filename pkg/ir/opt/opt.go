@@ -349,18 +349,41 @@ func sortLimitToTopN(n ir.Node, _ *Options) (ir.Node, bool) {
 	if !ok || l.Count < 0 {
 		return n, false
 	}
-	s, ok := l.Input.(*ir.Sort)
+	top, ok := BoundSort(l.Input, l.Count+l.Offset)
 	if !ok {
 		return n, false
 	}
-	if l.Count == 0 {
-		return &ir.Limit{Input: s.Input}, true
-	}
-	top := &ir.TopN{Input: s.Input, Keys: s.Keys, Count: l.Count + l.Offset}
 	if l.Offset > 0 {
-		return &ir.Limit{Input: top, Count: l.Count, Offset: l.Offset}, true
+		return l.WithInputs([]ir.Node{top}), true
 	}
 	return top, true
+}
+
+// BoundSort caps the nearest sort beneath operators that preserve both
+// order and row count. Sort keys are evaluated before any projection that
+// hides or replaces them.
+func BoundSort(input ir.Node, count int64) (ir.Node, bool) {
+	switch n := input.(type) {
+	case *ir.Sort:
+		if count == 0 {
+			return &ir.Limit{Input: n.Input}, true
+		}
+		return &ir.TopN{Input: n.Input, Keys: n.Keys, Count: count}, true
+	case *ir.TopN:
+		if n.Offset == 0 && count < n.Count {
+			if count == 0 {
+				return &ir.Limit{Input: n.Input}, true
+			}
+			cp := *n
+			cp.Count = count
+			return &cp, true
+		}
+	case *ir.Project, *ir.Compute, *ir.RenameColumns, *ir.FillNull, *ir.Extract:
+		if child, ok := BoundSort(input.Inputs()[0], count); ok {
+			return input.WithInputs([]ir.Node{child}), true
+		}
+	}
+	return input, false
 }
 
 // limitIntoScan tells a scan how many rows the operators above it read
