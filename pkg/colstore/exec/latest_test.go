@@ -2,7 +2,9 @@ package exec_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,7 +63,15 @@ func TestFirstRowsOfAWordOpenTheSameBlocks(t *testing.T) {
 				if len(all) <= c.limit {
 					t.Fatalf("%d rows hold the word, want more than the %d kept", len(all), c.limit)
 				}
-				// Rows of one time come in any order.
+				if c.name == "the latest" {
+					for _, n := range []int{5, c.limit, 2, 160} {
+						plan := fmt.Sprintf("%s | head %d", c.text, n)
+						got := resultRows(run(plan, exec.Options{Workers: workers}))
+						if !slices.Equal(got, all[:n]) {
+							t.Fatalf("head %d differs from full sort after reusing block bounds", n)
+						}
+					}
+				}
 				want := all[:c.limit]
 				sort.Strings(want)
 				limited := c.text + ` | head ` + strconv.Itoa(c.limit)

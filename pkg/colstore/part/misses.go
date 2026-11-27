@@ -27,7 +27,7 @@ func (m *Misses) Latest(block int, upper int64) int64 {
 	return upper
 }
 
-// SetLatest records the largest timestamp among all matches in block.
+// SetLatest records an upper bound on the timestamps of matches in block.
 func (m *Misses) SetLatest(block int, t int64) {
 	times := m.latest.Load()
 	if times == nil {

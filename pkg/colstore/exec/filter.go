@@ -2,9 +2,9 @@ package exec
 
 import (
 	"bytes"
-	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"math"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -455,7 +455,7 @@ func (w *worker) evalExpr(p *pred, depth int) (verdict, error) {
 func (w *worker) eval(p *pred, depth int) (verdict, error) {
 	switch p.kind {
 	case predAnd:
-		return w.evalAnd(p, depth)
+		return w.evalAnd(p, depth, false)
 	case predOr:
 		return w.evalOr(p, depth)
 	case predNot:
@@ -497,7 +497,7 @@ func (w *worker) eval(p *pred, depth int) (verdict, error) {
 	return none, nil
 }
 
-func (w *worker) evalAnd(p *pred, depth int) (verdict, error) {
+func (w *worker) evalAnd(p *pred, depth int, have bool) (verdict, error) {
 	// A block that any argument rules out is left before a column is decoded.
 	for _, a := range p.args {
 		if w.decide(a) == none {
@@ -505,7 +505,6 @@ func (w *worker) evalAnd(p *pred, depth int) (verdict, error) {
 		}
 	}
 	acc, next := &w.sels[depth], &w.sels[depth+1]
-	have := false
 	for _, a := range p.args {
 		if w.decide(a) == all {
 			continue
@@ -542,6 +541,65 @@ func (w *worker) evalAnd(p *pred, depth int) (verdict, error) {
 	}
 
 	return some, nil
+}
+
+// evalBlock tests the page's current time bound before requesting the text
+// columns. A keyed block can span the whole range yet contain only a few
+// rows near the bound. floor is set only if older matches went uncounted.
+func (w *worker) evalBlock() (v verdict, floor int64, err error) {
+	p := w.q.filter
+	if w.decide(p) == some {
+		if w.q.byTime < 0 && w.x.first != nil && (p.kind == predAnd || p.kind == predStr && p.op == OpMatch) {
+			floor = w.x.first.bound.Load()
+			if floor > w.b.MinTime {
+				s := &w.sels[0]
+				ok, err := w.timeCandidates(floor, s)
+				switch {
+				case err != nil:
+					return none, floor, err
+				case ok && len(s.list) == 0:
+					return none, floor, nil
+				case ok && p.kind == predAnd:
+					v, err = w.evalAnd(p, 0, true)
+					return v, floor, err
+				case ok:
+					if used, err := w.matchSelected(p, s); used || err != nil {
+						if len(s.list) == 0 {
+							return none, floor, err
+						}
+						return some, floor, err
+					}
+				}
+			}
+		}
+		w.b.Ahead(w.ahead[:w.filtered])
+	}
+	v, err = w.eval(p, 0)
+	return v, math.MinInt64, err
+}
+
+// timeCandidates lists rows still eligible for the page when they form
+// a sparse selection. An equal timestamp can still win on a later key.
+func (w *worker) timeCandidates(floor int64, s *selection) (bool, error) {
+	t, err := w.column(w.q.rowExprs[w.q.timeCol].path, vec.KindInt)
+	if err != nil || t == nil || t.Valid != nil {
+		return false, err
+	}
+	hi := w.q.opts.MaxTime
+	if w.q.opts.MinTime == 0 && hi == 0 {
+		hi = math.MaxInt64
+	}
+	s.list = s.list[:0]
+	for r := 0; r < w.rows; r++ {
+		if ts := t.Int(r); ts >= floor && ts <= hi {
+			s.list = append(s.list, uint32(r))
+			if len(s.list) > w.rows/8 {
+				return false, nil
+			}
+		}
+	}
+	s.listed = true
+	return true, nil
 }
 
 // matchSelected refines a sparse selection in place. Dense input and
