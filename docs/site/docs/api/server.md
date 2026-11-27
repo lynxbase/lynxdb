@@ -118,7 +118,7 @@ curl -s localhost:3100/api/v1/stats
 | `indexes` | One entry per index, as in [`GET /api/v1/indexes`](./ingest.md#get-indexes) |
 | `jobs` | Jobs the server keeps, by state |
 
-Like a query, `status` and `stats` first write the events ingested so far, so the counts include them.
+Event totals and time bounds include buffered rows. Part counts and storage bytes cover committed parts.
 
 ## GET /api/v1/config
 
