@@ -28,7 +28,7 @@ func sumStats(stats []columnar.IndexStats) storeTotals {
 		t.parts += ix.Parts
 		t.merges += ix.Merges
 		t.runs += ix.RunsToMerge
-		if ix.Parts == 0 {
+		if ix.Rows == 0 {
 			continue
 		}
 		if t.oldest.IsZero() || ix.First.Before(t.oldest) {
@@ -61,7 +61,6 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery, auth.ScopeAdmin) {
 		return
 	}
-	s.syncForRead()
 	stats := s.db.Stats()
 	totals := sumStats(stats)
 	indexes := make([]map[string]interface{}, 0, len(stats))
@@ -90,7 +89,6 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 // handleStatus returns a unified server status from the stats of the
 // indexes and the jobs.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	s.syncForRead()
 	totals := sumStats(s.db.Stats())
 	jobs := s.jobCounts()
 

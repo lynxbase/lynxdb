@@ -28,10 +28,11 @@ func TestCompactMergesAnIndexIntoOnePart(t *testing.T) {
 	defer cleanup()
 
 	statsURL := fmt.Sprintf("http://%s/api/v1/stats", srv.Addr())
-	// Stats write the buffered events, so every round leaves a run.
 	for i := range 3 {
 		ingestNDJSON(t, srv.Addr(), "web", fmt.Sprintf("{\"msg\":\"m%d\"}\n{\"msg\":\"n%d\"}\n", i, i))
-		getData(t, statsURL)
+		if err := srv.db.SyncIndex("web"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	ingestNDJSON(t, srv.Addr(), "web", "{\"msg\":\"buffered\"}\n")
 

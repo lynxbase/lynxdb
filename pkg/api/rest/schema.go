@@ -9,8 +9,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 )
 
-// indexEntry describes an index from its stats and settings; an index
-// whose events are not yet written has no first or last event.
+// indexEntry describes the visible events, storage and settings of an index.
 func indexEntry(ix columnar.IndexStats) map[string]interface{} {
 	entry := map[string]interface{}{
 		"name":            ix.Name,
@@ -25,7 +24,7 @@ func indexEntry(ix columnar.IndexStats) map[string]interface{} {
 		"partition":       config.Duration(ix.Settings.Partition).String(),
 		"part_dictionary": ix.Settings.PartDictionary,
 	}
-	if ix.Parts > 0 {
+	if ix.Rows > 0 {
 		entry["first_event"] = ix.First.Format(time.RFC3339Nano)
 		entry["last_event"] = ix.Last.Format(time.RFC3339Nano)
 	}
@@ -37,7 +36,6 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
 	}
-	s.syncForRead()
 	stats := s.db.Stats()
 	indexes := make([]map[string]interface{}, 0, len(stats))
 	for _, ix := range stats {
