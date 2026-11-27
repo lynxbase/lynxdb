@@ -1,17 +1,45 @@
-import {themes as prismThemes} from 'prism-react-renderer';
+import type {PrismTheme} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+const codeTheme: PrismTheme = {
+  plain: {
+    color: 'var(--lynx-code-text)',
+    backgroundColor: 'var(--lynx-code-bg)',
+  },
+  styles: [
+    {types: ['comment', 'prolog', 'doctype', 'cdata'], style: {color: 'var(--lynx-code-comment)'}},
+    {types: ['keyword', 'tag', 'atrule', 'inserted'], style: {color: 'var(--lynx-code-keyword)'}},
+    {types: ['function', 'property', 'attr-name', 'class-name'], style: {color: 'var(--lynx-code-function)'}},
+    {types: ['string', 'char', 'attr-value', 'regex'], style: {color: 'var(--lynx-code-string)'}},
+    {types: ['number', 'boolean', 'constant'], style: {color: 'var(--lynx-code-number)'}},
+    {types: ['deleted', 'important'], style: {color: 'var(--lynx-code-error)'}},
+  ],
+};
 
 const config: Config = {
   title: 'LynxDB',
   tagline: 'Log analytics in one binary',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/lynxdb-appicon-moss.svg',
   url: 'https://docs.lynxdb.org',
   baseUrl: '/',
   trailingSlash: true,
   organizationName: 'lynxbase',
   projectName: 'lynxdb',
   onBrokenLinks: 'throw',
+
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'preload',
+        href: '/fonts/geist-latin-wght-normal.woff2',
+        as: 'font',
+        type: 'font/woff2',
+        crossorigin: 'anonymous',
+      },
+    },
+  ],
 
   future: {
     v4: true,
@@ -79,7 +107,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/lynxdb-icon.png',
+    image: 'img/lynxdb-share.jpg',
     metadata: [{property: 'og:site_name', content: 'LynxDB'}],
     colorMode: {
       defaultMode: 'light',
@@ -89,9 +117,10 @@ const config: Config = {
       title: 'LynxDB',
       logo: {
         alt: '',
-        src: 'img/lynxdb-icon.png',
-        srcDark: 'img/lynxdb-icon.png',
-        style: {height: '32px'},
+        src: 'img/lynxdb-mark-faceted-on-light.svg',
+        srcDark: 'img/lynxdb-mark-faceted-on-dark.svg',
+        width: 22,
+        height: 30,
       },
       items: [
         {
@@ -119,7 +148,7 @@ const config: Config = {
       ],
     },
     footer: {
-      style: 'dark',
+      style: 'light',
       links: [
         {
           title: 'Docs',
@@ -163,6 +192,10 @@ const config: Config = {
           title: 'More',
           items: [
             {
+              label: 'LynxDB website',
+              href: 'https://lynxdb.org/',
+            },
+            {
               label: 'Blog',
               to: '/blog',
             },
@@ -182,8 +215,8 @@ const config: Config = {
       },
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      theme: codeTheme,
+      darkTheme: codeTheme,
       additionalLanguages: ['bash', 'yaml', 'json', 'go', 'sql'],
     },
   } satisfies Preset.ThemeConfig,
