@@ -2,6 +2,7 @@ package colstore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -308,6 +309,49 @@ var scanListsPool = sync.Pool{New: func() any { return new(scanLists) }}
 // block that may hold matching rows; a panic or memory fault in a worker
 // fails the scan instead of the process.
 func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (ScanStats, error) {
+	parts := s.v.parts
+	if opts.ByTime >= 0 || opts.Bound == nil || len(parts) < 2 {
+		return s.scanParts(ctx, parts, opts, fn)
+	}
+	// Build block queues only for parts whose times can still reach the
+	// answer. Overlapping parts share a queue and a cutoff, including
+	// late writes and buffers that span several disk partitions.
+	parts = slices.Clone(parts)
+	slices.SortStableFunc(parts, func(a, b *Handle) int { return cmp.Compare(b.MaxTime, a.MaxTime) })
+	var total ScanStats
+	for len(parts) > 0 {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		if parts[0].MaxTime < opts.Bound.Load() {
+			for _, h := range parts {
+				n := int64(h.NumBlocks())
+				total.SkippedByTime += n
+				total.Limited += n
+			}
+			break
+		}
+		lo, end := parts[0].MinTime, 1
+		for end < len(parts) && parts[end].MaxTime >= lo {
+			lo = min(lo, parts[end].MinTime)
+			end++
+		}
+		st, err := s.scanParts(ctx, parts[:end], opts, fn)
+		total.Blocks += st.Blocks
+		total.SkippedByTime += st.SkippedByTime
+		total.Limited += st.Limited
+		total.SkippedByKey += st.SkippedByKey
+		total.SkippedByToken += st.SkippedByToken
+		total.SkippedAsEmpty += st.SkippedAsEmpty
+		if err != nil {
+			return total, err
+		}
+		parts = parts[end:]
+	}
+	return total, nil
+}
+
+func (s *Snapshot) scanParts(ctx context.Context, parts []*Handle, opts ScanOptions, fn BlockFunc) (ScanStats, error) {
 	minT, maxT := opts.MinTime, opts.MaxTime
 	if minT == 0 && maxT == 0 {
 		minT, maxT = math.MinInt64, math.MaxInt64
@@ -323,7 +367,6 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		clear(lists.empties)
 		scanListsPool.Put(lists)
 	}()
-	parts := s.v.parts
 	units, ids := lists.units[:0], lists.ids[:0]
 	empties := lists.empties[:0]
 	for range parts {
@@ -383,6 +426,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 					stats.SkippedByToken++
 
 					continue
+				}
+				if opts.ByTime < 0 && empty != nil {
+					hi = empty.Latest(i, hi)
 				}
 				units = append(units, scanUnit{part: int32(n), block: int32(i), ids: int32(at), first: lo, last: hi})
 			}

@@ -521,3 +521,30 @@ func TestNewestTiesFollowSnapshotOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestLatestUsesVerifiedTimesAcrossOverlappingBlocks(t *testing.T) {
+	tables := testTables{}
+	for i := range 24 {
+		name := fmt.Sprintf("logs%02d", i)
+		tables[name] = tableOf(t,
+			fmt.Sprintf(`{"ts":%d,"msg":"match","id":%d}`, 1690000000+i, i),
+			`{"ts":1700000000,"msg":"other"}`)
+	}
+	c, err := query.Compile("source=logs* match | head 3 | fields id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for trial := range 2 {
+		res, err := Run(t.Context(), c.Plan, tables, Options{Workers: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := render(res.Maps()); got != "id=23; id=22; id=21" {
+			t.Fatal(got)
+		}
+		stats, ok := res.Stats()
+		if !ok || (trial == 1 && stats.SkippedByTime == 0) {
+			t.Fatalf("trial %d: %+v", trial, stats)
+		}
+	}
+}
