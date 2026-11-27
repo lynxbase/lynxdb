@@ -136,6 +136,11 @@ const config: Config = {
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {
+          href: 'https://lynxdb.org/',
+          label: 'Website',
+          position: 'right',
+        },
+        {
           href: 'https://github.com/lynxbase/lynxdb',
           label: 'GitHub',
           position: 'right',
