@@ -35,6 +35,9 @@ type Config struct {
 	// Dir holds the indexes; an empty Dir keeps them in a temporary
 	// directory that Close removes.
 	Dir string
+	// DataDir is the enclosing server data directory, excluded from partition
+	// archive paths. When empty, the directory holding the indexes is excluded.
+	DataDir string
 	// Retention is how long events are kept; zero keeps them all.
 	Retention time.Duration
 	// Partition, TimeFields, SortKey and PartDictionary are the settings
@@ -101,6 +104,7 @@ func Open(cfg Config) (*DB, error) {
 		cfg.Logger = slog.Default()
 	}
 	core, err := columnar.Open(columnar.Config{Dir: cfg.Dir, Store: colstore.StoreOptions{
+		DataDir:       cfg.DataDir,
 		TimeFields:    cfg.TimeFields,
 		SortKey:       cfg.SortKey,
 		Partition:     cfg.Partition,

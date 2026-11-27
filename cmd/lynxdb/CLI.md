@@ -17,6 +17,7 @@ User documentation lives in `docs/site/docs/cli/`; the query language is describ
 - Load data: [ingest](#ingest)
 - Server: [server](#server)
 - Inspect: [status](#status), [indexes](#indexes), [jobs](#jobs)
+- Manage partitions: [partitions](#partitions)
 - Authentication: [login](#login), [logout](#logout), [auth](#auth)
 - Configuration: [config](#config)
 - Utilities: [version](#version), [completion](#completion)
@@ -279,6 +280,17 @@ lynxdb indexes
 ```
 
 Lists indexes with their events, bytes, parts and the times of their first and last events. In JSON, one object per index with `name`, `events`, `bytes`, `parts`, `first_event` and `last_event`; `fields`, `jobs`, `auth list` and `config list-profiles` likewise print one object per item with lowercase snake_case keys.
+
+## partitions
+
+```bash
+lynxdb partitions list web
+lynxdb partitions detach web 2026-10-01 --to /mnt/archive/web-20261001
+lynxdb partitions attach web /mnt/archive/web-20261001
+lynxdb partitions drop web 2026-10-01
+```
+
+Each row gives the inclusive start, exclusive end, event count, bytes and part count of a partition. Use the exact start from the list, or a UTC date for a start at midnight. Drop asks for confirmation on a terminal (`--yes` skips the prompt). Detach and attach take absolute paths on the server. `--timeout` limits how long the CLI waits (default `0`, no timeout). See [partitions](../../docs/site/docs/cli/status.md#partitions) for destination requirements and retention.
 
 ## jobs
 

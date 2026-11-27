@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -56,6 +55,9 @@ func Open(cfg Config) (*DB, error) {
 			return nil, err
 		}
 		db.cfg.Dir, db.temporary = dir, true
+	}
+	if db.cfg.Store.DataDir == "" {
+		db.cfg.Store.DataDir = db.cfg.Dir
 	}
 	if err := os.MkdirAll(db.cfg.Dir, 0o755); err != nil {
 		return nil, err
@@ -258,8 +260,9 @@ func (db *DB) Names() []string {
 // before it; an index whose events could not be written is read as it is on
 // disk, and the result says so in a warning.
 func (db *DB) Query(ctx context.Context, plan *ir.Plan, opts Options) (*Result, error) {
-	behind := db.syncSources(plan, opts.DefaultSource)
-	res, err := Run(ctx, plan, db, opts)
+	sources, behind := db.querySources(plan, opts.DefaultSource)
+	defer sources.release()
+	res, err := Run(ctx, plan, sources, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -268,39 +271,64 @@ func (db *DB) Query(ctx context.Context, plan *ir.Plan, opts Options) (*Result, 
 	return res, nil
 }
 
-// syncSources syncs the indexes that plan reads, those of its subqueries
-// included, and returns a warning for every one that failed.
-func (db *DB) syncSources(plan *ir.Plan, defaultSource string) []string {
+// queryTables pins one version of each source for every scan of the query,
+// including later reads by joins, schema discovery and subqueries.
+type queryTables struct {
+	parts map[string]*colstore.Snapshot
+	names func() []string
+}
+
+func (t queryTables) Names() []string { return t.names() }
+
+func (t queryTables) Snapshot(name string) (*colstore.Snapshot, bool) {
+	s := t.parts[name]
+	if s == nil {
+		return nil, false
+	}
+
+	return s.Narrow(colstore.KeyFilter{}), true
+}
+
+func (t queryTables) release() {
+	for _, s := range t.parts {
+		if s != nil {
+			s.Release()
+		}
+	}
+}
+
+func (db *DB) querySources(plan *ir.Plan, defaultSource string) (queryTables, []string) {
+	tables := queryTables{parts: make(map[string]*colstore.Snapshot), names: sync.OnceValue(db.Names)}
 	var warnings []string
-	var done []string
-	sync := func(sources []ir.Source) {
-		names, _ := sourceNames(sources, defaultSource, db.Names)
+	pin := func(sources []ir.Source) {
+		names, _ := sourceNames(sources, defaultSource, tables.Names)
 		for _, name := range names {
-			if slices.Contains(done, name) {
+			if _, seen := tables.parts[name]; seen {
 				continue
 			}
-			done = append(done, name)
 			s, err := db.store(name, false)
 			if err != nil || s == nil {
+				tables.parts[name] = nil
 				continue
 			}
 			if err := s.Sync(); err != nil {
 				warnings = append(warnings, fmt.Sprintf("index %s: its latest events are not searchable yet: %v", name, err))
 			}
+			tables.parts[name] = s.Table().Snapshot()
 		}
 	}
 	ir.WalkPlan(plan.Root, func(n ir.Node) bool {
 		switch x := n.(type) {
 		case *ir.Scan:
-			sync(x.Sources)
+			pin(x.Sources)
 		case *ir.SourceSchema:
-			sync([]ir.Source{x.Source})
+			pin([]ir.Source{x.Source})
 		}
 
 		return true
 	})
 
-	return warnings
+	return tables, warnings
 }
 
 // IndexStats describes what an index holds.

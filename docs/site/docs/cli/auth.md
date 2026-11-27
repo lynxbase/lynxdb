@@ -66,7 +66,7 @@ lynxdb auth create --name <name> [--scope <scope>] [--expires <duration>] [--des
 |-------|--------|
 | `ingest` | Ingest endpoints: `/api/v1/ingest`, `/api/v1/ingest/raw`, Elasticsearch `_bulk` and `_doc`, Splunk HEC, the OTLP listeners |
 | `query` | Queries, query streams and job status |
-| `admin` | Canceling jobs, reading the server config |
+| `admin` | Managing partitions, canceling jobs, reading the server config |
 | `full` | Everything except the key API and config changes, which take the root key |
 
 Endpoints that only read state, such as `/api/v1/stats`, `/api/v1/status`, `/api/v1/fields`, `/api/v1/histogram` and `/api/v1/query/explain`, take a key of any scope.

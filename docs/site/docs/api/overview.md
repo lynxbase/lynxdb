@@ -83,7 +83,8 @@ Keys have one of four scopes: `ingest`, `query`, `admin`, `full`. Root keys and 
 |---|---|
 | `POST /ingest`, `/ingest/raw`; at the root `/_bulk`, `/{index}/_bulk`, `/_data_stream/{name}/_bulk`, `/{index}/_doc` and the Splunk HEC routes; the OTLP listeners | `ingest` |
 | `POST` and `GET /query`, `POST /query/stream`, `GET /query/jobs`, `GET /query/jobs/{id}` | `query` |
-| `DELETE /query/jobs/{id}`, `GET /config` | `admin` |
+| `GET /indexes/{index}/partitions` | `query` or `admin` |
+| `DELETE /query/jobs/{id}`, `GET /config`, partition drop, detach and attach | `admin` |
 | `PATCH /config`, `/auth/...` | a root key |
 | Everything else, including the Elasticsearch handshake and stubs | any valid key |
 
@@ -155,6 +156,9 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `POST` | `/ingest` | Ingest NDJSON events | [Ingest](./ingest.md) |
 | `POST` | `/ingest/raw` | Ingest log text | [Ingest](./ingest.md#post-ingestraw) |
 | `GET` | `/indexes` | List indexes | [Ingest](./ingest.md#get-indexes) |
+| `GET` | `/indexes/{index}/partitions` | List partition sizes and boundaries | [Partitions](./ingest.md#partition-management) |
+| `DELETE` | `/indexes/{index}/partitions/{start}` | Drop a partition | [Partitions](./ingest.md#partition-management) |
+| `POST` | `/indexes/{index}/partitions/{start}/detach`, `/indexes/{index}/partitions/attach` | Export or import a partition | [Partitions](./ingest.md#partition-management) |
 | `POST` | `/_bulk`, `/{index}/_bulk`, `/_data_stream/{name}/_bulk` | Elasticsearch bulk ingest | [Compatibility](./compatibility.md) |
 | `POST` | `/{index}/_doc` | Elasticsearch single-document ingest | [Compatibility](./compatibility.md#post-index_doc) |
 | `GET` | `/` | Elasticsearch handshake | [Compatibility](./compatibility.md#handshake-and-setup-probes) |

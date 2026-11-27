@@ -45,6 +45,14 @@ Events are partitioned by event time. The saved partition width can differ by in
 - Every index uses the same retention period and its own partition width.
 - The event timestamp assigns the partition even when a log arrives late. Set `retention: 0s` on a server that should keep all partitions.
 
+## Move or remove one partition
+
+Run `lynxdb partitions list web` to see the time boundaries, event count and disk usage of each partition in `web`. Use its start time to [detach or drop that partition](../cli/status.md#partitions). Ingest and queries continue during the initial archive copy. Before publishing it, the server pauses writes to that index, flushes pending events and adds any new parts for the same interval. Queries keep reading throughout.
+
+To restore the data, attach the archive to an index with the same settings and an empty interval. If the interval already falls outside the destination's retention window, its next retention pass can remove it immediately. Set the destination's retention before importing historical data.
+
+A detach makes the archive durable before removing the live partition. After an interrupted detach, check both the partition list and the archive directory. A failure during export can leave an incomplete archive and a live partition. A failure after export can leave both complete copies. Use a fresh destination path to retry a detach of a live partition.
+
 ## Events older than the retention
 
 An event whose partition the next pass would remove is not stored. With `retention: 7d`, a log file from last month sent to the server stores nothing: raise `retention`, or set it to `0s`, before loading old data.

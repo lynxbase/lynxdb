@@ -30,7 +30,7 @@ const (
 	ScopeIngest Scope = "ingest"
 	// ScopeQuery allows running queries and reading their jobs.
 	ScopeQuery Scope = "query"
-	// ScopeAdmin allows reading the config and canceling jobs.
+	// ScopeAdmin allows managing partitions, reading the config and canceling jobs.
 	ScopeAdmin Scope = "admin"
 	// ScopeFull allows access to all endpoints (default).
 	ScopeFull Scope = "full"
