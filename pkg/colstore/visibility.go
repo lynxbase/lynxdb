@@ -8,6 +8,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // EventRange describes the rows still in memory and their time bounds in Unix nanoseconds.
@@ -33,10 +34,7 @@ func (r *EventRange) addTimes(times []int64) {
 	if len(times) == 0 {
 		return
 	}
-	first, last := times[0], times[0]
-	for _, t := range times[1:] {
-		first, last = min(first, t), max(last, t)
-	}
+	first, last := vec.MinMaxInt64(times)
 	r.add(EventRange{uint64(len(times)), first, last})
 }
 
@@ -71,11 +69,42 @@ func (s *Store) pinShards() *Snapshot {
 
 // readBlock owns a copy of the rows. Concurrent readers share its encoding,
 // which can finish after the original batch has been sorted or recycled.
-type readBlock func() (*Handle, error)
+type readBlock struct {
+	first int // first row in the append batch
+	open  func() (*Handle, error)
+}
 
 type batchView struct {
 	rows   int
 	blocks []readBlock
+}
+
+// extend coalesces short reads so repeated append/query pairs do not leave
+// one block per request for every later scan. Fold a group into a larger
+// block when its average block is no larger than the new rows.
+func (v *batchView) extend(s *Store, b *shred.Batch) {
+	if v.rows == b.Rows {
+		return
+	}
+	const fanIn = 32
+	// Bound the copying a point read pays for. Larger batches already
+	// amortize the cost of opening a block over many values.
+	const maxCopyBytes = 32 << 10
+	from := v.rows
+	for len(v.blocks) >= fanIn-1 {
+		at := len(v.blocks) - (fanIn - 1)
+		first := v.blocks[at].first
+		rows := b.Rows - first
+		if rows > s.opts.BlockRows || from-first > (fanIn-1)*(b.Rows-from) ||
+			int64(rows)*int64(b.Bytes)/int64(b.Rows) > maxCopyBytes {
+			break
+		}
+		clear(v.blocks[at:])
+		v.blocks = v.blocks[:at]
+		from = first
+	}
+	v.blocks = s.copyBlocks(v.blocks, b, from)
+	v.rows = b.Rows
 }
 
 func (s *Store) copyBlocks(dst []readBlock, b *shred.Batch, from int) []readBlock {
@@ -83,10 +112,11 @@ func (s *Store) copyBlocks(dst []readBlock, b *shred.Batch, from int) []readBloc
 		end := from + min(s.opts.BlockRows, b.Rows-from)
 		block := shred.Get(shred.Options{})
 		b.CopyRows(block, from, end)
-		dst = append(dst, sync.OnceValues(func() (*Handle, error) {
+		open := sync.OnceValues(func() (*Handle, error) {
 			defer shred.Put(block)
 			return memoryBlock(block, s.opts.SortKey)
-		}))
+		})
+		dst = append(dst, readBlock{first: from, open: open})
 		from = end
 	}
 	return dst
@@ -171,7 +201,7 @@ func (s *Store) ReadSnapshot(ctx context.Context) (*Snapshot, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		h, err := block()
+		h, err := block.open()
 		if err != nil {
 			return nil, err
 		}
@@ -201,8 +231,7 @@ func (s *Store) pinBuffers(ctx context.Context) (*Snapshot, []readBlock, error) 
 	for i := range s.shards {
 		sh := &s.shards[i]
 		if sh.batch != nil {
-			sh.view.blocks = s.copyBlocks(sh.view.blocks, sh.batch, sh.view.rows)
-			sh.view.rows = sh.batch.Rows
+			sh.view.extend(s, sh.batch)
 			blocks = append(blocks, sh.view.blocks...)
 		}
 		sh.mu.Unlock()

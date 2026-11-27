@@ -3,6 +3,7 @@ package colstore
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -776,5 +777,29 @@ func TestSyncAfterCloseIsRefused(t *testing.T) {
 	}
 	if err := store.Sync(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Sync after Close: %v", err)
+	}
+}
+
+func TestReadSnapshotAcrossSmallAppends(t *testing.T) {
+	s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", BlockRows: 64, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var total int
+	for _, n := range []int{1, 1, 1, 1, 1, 1, 1, 1, 16, 2, 2, 2, 65, 3, 1, 1, 1, 1, 1, 1, 1, 1, 64, 7, 4, 80} {
+		if _, err := s.Append(runDocs(total, n)); err != nil {
+			t.Fatal(err)
+		}
+		total += n
+		snap, err := s.ReadSnapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, sum, _ := sumN(t, snap, ScanOptions{})
+		snap.Release()
+		if rows != int64(total) || sum != rows*(rows-1)/2 {
+			t.Fatalf("after %d events: %d rows, sum %d", total, rows, sum)
+		}
 	}
 }
