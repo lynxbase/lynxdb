@@ -2,6 +2,7 @@ package colstore
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"runtime"
 	"slices"
@@ -16,6 +17,9 @@ import (
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
+	// DataDir is the server data directory, where partition archives cannot
+	// be written or read. An empty value protects the store directory.
+	DataDir string
 	// SortKey orders the rows of every run, rows equal in it by their
 	// time; empty orders them by time alone.
 	SortKey []string
@@ -115,8 +119,8 @@ type Store struct {
 	cores  chan struct{}
 	blocks blockBudget
 
-	// dropping is held while partitions are dropped and while the
-	// directory closes, one at a time. merges counts the merges under way
+	// dropping serializes partition changes, explicit compaction and
+	// closing the directory. merges counts the merges under way
 	// for the merger to wait for when it stops.
 	dropping sync.Mutex
 	merges   sync.WaitGroup
@@ -201,10 +205,9 @@ type Store struct {
 	running int
 	// arrived holds, by partition, when rows were last flushed to it.
 	arrived map[int64]int64
-	// drops is set while the partitions that end at or before dropTo are
-	// being dropped; merges leave them alone.
-	drops  bool
-	dropTo int64
+	// heldPartition selects the partitions a removal has reserved under
+	// dropping. The merger skips them until the removal ends.
+	heldPartition func(int64) bool
 }
 
 // OpenStore opens the table stored in path and starts its merger.
@@ -913,20 +916,9 @@ func (s *Store) DropBefore(t int64) (uint64, error) {
 	if s.opts.Partition <= 0 {
 		return 0, nil
 	}
-	// Merges start on none of the partitions from here on, and those that
-	// read one of them end first: what they write would bring its rows
-	// back.
-	s.mu.Lock()
-	s.drops, s.dropTo = true, t
-	for s.mergesBefore(t) {
-		s.idle.Wait()
-	}
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.drops = false
-		s.mu.Unlock()
-	}()
+	matches := func(p int64) bool { return s.endsBy(p, t) }
+	resume := s.pauseMerges(context.Background(), matches)
+	defer resume()
 	snap := s.Table().Snapshot()
 	defer snap.Release()
 	var old []*Handle
@@ -957,15 +949,37 @@ func (s *Store) endsBy(p, t int64) bool {
 	return width > 0 && end/width == p+1 && end <= t
 }
 
-// mergesBefore reports whether a merge under way reads a partition that
-// ends at or before t; the caller holds the lock of the merger's state.
-func (s *Store) mergesBefore(t int64) bool {
+// pauseMerges reserves matching partitions and drains their current merges.
+// The caller holds dropping and calls the returned function before releasing it.
+func (s *Store) pauseMerges(ctx context.Context, matches func(int64) bool) func() {
+	stop := context.AfterFunc(ctx, func() {
+		s.mu.Lock()
+		s.idle.Broadcast()
+		s.mu.Unlock()
+	})
+	s.mu.Lock()
+	s.heldPartition = matches
+	for s.hasMerge(matches) && ctx.Err() == nil {
+		s.idle.Wait()
+	}
+	s.mu.Unlock()
+	stop()
+
+	return func() {
+		s.mu.Lock()
+		s.heldPartition = nil
+		s.mu.Unlock()
+		s.kick()
+	}
+}
+
+// hasMerge reports whether a merge reads any matching partition, under mu.
+func (s *Store) hasMerge(matches func(int64) bool) bool {
 	for _, p := range s.busy {
-		if s.endsBy(p, t) {
+		if matches(p) {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -1000,6 +1014,8 @@ func (s *Store) MergeState() (running, due int) {
 
 // Compact merges the runs of every partition into one and waits for it.
 func (s *Store) Compact() error {
+	s.dropping.Lock()
+	defer s.dropping.Unlock()
 	s.mu.Lock()
 	s.compact = true
 	s.mu.Unlock()
@@ -1358,7 +1374,7 @@ func (s *Store) startMerges(compact bool) bool {
 	free := make([]*Handle, 0, len(snap.Parts()))
 	for _, h := range snap.Parts() {
 		_, busy := s.busy[h.Run]
-		if dropped := s.drops && s.endsBy(h.Partition, s.dropTo); !busy && !held[h.Partition] && !dropped {
+		if dropped := s.heldPartition != nil && s.heldPartition(h.Partition); !busy && !held[h.Partition] && !dropped {
 			free = append(free, h)
 		}
 	}
