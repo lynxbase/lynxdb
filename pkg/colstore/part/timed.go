@@ -1723,25 +1723,8 @@ func (b *Block) decodeTimedRows(ref *ColumnRef, rows []uint32, dst *vec.Column) 
 	if err := v.resolve(); err != nil {
 		return err
 	}
-	b.pos = append(b.pos[:0], rows...)
-	slices.Sort(b.pos)
-	b.pos = slices.Compact(b.pos)
-	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
-	dst.Offsets = grow(dst.Offsets, b.Rows+1)
-	data := dst.Data[:0]
-	at, run, repeats := 0, 0, 0
-	for _, row := range b.pos {
-		r := int(row)
-		if r >= b.Rows || !dst.IsValid(r) {
-			continue
-		}
-		for ; at <= r; at++ {
-			dst.Offsets[at] = uint32(len(data))
-		}
-		i := r
-		if dst.Valid != nil {
-			i = dst.Valid.Rank(r)
-		}
+	run, repeats := 0, 0
+	b.selectedStrings(rows, dst, func(data []byte, i int) []byte {
 		// A run repeats the preceding kept value.
 		for run < len(v.runStart) && i >= int(v.runStart[run]+v.runLen[run]) {
 			repeats += int(v.runLen[run])
@@ -1760,11 +1743,8 @@ func (b *Block) decodeTimedRows(ref *ColumnRef, rows []uint32, dst *vec.Column) 
 		off := len(data)
 		data = slices.Grow(data, n)[:off+n]
 		v.put(data[off:], i)
-	}
-	for ; at <= b.Rows; at++ {
-		dst.Offsets[at] = uint32(len(data))
-	}
-	dst.Data = data
+		return data
+	})
 
 	return nil
 }

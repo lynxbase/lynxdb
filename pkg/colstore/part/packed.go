@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"math"
 	"math/bits"
+	"slices"
+
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // A packed section holds byte strings of one length whose bytes, where they
@@ -349,6 +352,30 @@ func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
 	}
 	r.count, r.codes = count, codes
 
+	return nil
+}
+
+// decodePackedRows uses the bit offset of each selected identifier to
+// avoid spelling the other identifiers in its column.
+func (b *Block) decodePackedRows(ref *ColumnRef, rows []uint32, dst *vec.Column, body []byte, rawLen, stride int) error {
+	if err := b.DecodePresence(ref, dst); err != nil {
+		return err
+	}
+	scratch := unpackers.Get().(*packScratch)
+	defer unpackers.Put(scratch)
+	var r packedReader
+	if err := r.open(body, rawLen, scratch); err != nil {
+		return err
+	}
+	if r.count != ref.Count || r.stride != stride {
+		return ErrCorrupt
+	}
+	b.selectedStrings(rows, dst, func(data []byte, i int) []byte {
+		off := len(data)
+		data = slices.Grow(data, stride)[:off+stride]
+		r.put(data[off:], i, i+1)
+		return data
+	})
 	return nil
 }
 
