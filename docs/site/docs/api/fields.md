@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
-title: Fields
+title: REST API field catalog and top values
+sidebar_label: Fields
 description: The field catalog and the top values of a field.
 ---
 

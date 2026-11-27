@@ -1,5 +1,6 @@
 ---
-title: Configuration Overview
+title: LynxDB server and CLI configuration
+sidebar_label: Configuration Overview
 description: How LynxDB resolves server configuration, where it finds config files, what .lynxdbrc does, and which settings a reload applies.
 ---
 

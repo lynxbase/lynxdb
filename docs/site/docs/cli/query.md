@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
-title: query
+title: lynxdb query
+sidebar_label: query
 description: Run PPL queries against a LynxDB server, local files or standard input.
 ---
 

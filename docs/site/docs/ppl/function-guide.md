@@ -1,5 +1,5 @@
 ---
-title: Function guide
+title: PPL scalar function guide
 sidebar_label: Function guide
 description: How PPL scalar functions behave in LynxDB, by category, with examples.
 ---

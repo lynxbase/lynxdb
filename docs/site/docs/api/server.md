@@ -1,6 +1,7 @@
 ---
 sidebar_position: 10
-title: Server
+title: REST API health, metrics and configuration
+sidebar_label: Server
 description: Health checks, Prometheus metrics, status and stats snapshots, runtime configuration, API keys and profiling endpoints.
 ---
 

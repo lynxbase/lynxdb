@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
-title: Your First Query
+title: Write your first PPL query
+sidebar_label: Your First Query
 description: PPL basics in LynxDB - search, filter, aggregate, sort and extract fields.
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: Time series
+title: PPL time ranges and time series
 sidebar_label: Time series
 description: Time ranges, timechart, bin, span and time functions in PPL.
 ---

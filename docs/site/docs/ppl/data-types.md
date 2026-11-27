@@ -1,5 +1,5 @@
 ---
-title: Data types
+title: PPL data types and conversions
 sidebar_label: Data types
 description: PPL types, LynxDB's value types, and the conversions between them.
 ---

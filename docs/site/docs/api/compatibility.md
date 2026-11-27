@@ -1,6 +1,7 @@
 ---
 sidebar_position: 11
-title: Compatibility
+title: REST API compatibility endpoints
+sidebar_label: Compatibility
 description: Elasticsearch bulk ingest and setup stubs, Splunk HEC ingest and OpenTelemetry OTLP log ingest.
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: Pipeline execution
+title: PPL pipeline execution
 sidebar_label: Pipeline execution
 description: How LynxDB runs a compiled PPL plan with the columnar executor and the row operators, locally and on a server.
 ---

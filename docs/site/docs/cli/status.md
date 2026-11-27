@@ -1,6 +1,7 @@
 ---
 sidebar_position: 7
-title: status, fields, jobs & more
+title: lynxdb status, fields and jobs
+sidebar_label: status, fields, jobs & more
 description: Inspect a LynxDB server - status and health, indexes, query jobs, the field catalog and the CLI version.
 ---
 

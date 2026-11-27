@@ -1,5 +1,5 @@
 ---
-title: Aggregation guide
+title: PPL aggregation function guide
 sidebar_label: Aggregation guide
 description: How PPL aggregation functions behave in LynxDB.
 ---

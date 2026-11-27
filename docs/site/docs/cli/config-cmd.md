@@ -1,6 +1,7 @@
 ---
 sidebar_position: 9
-title: config
+title: lynxdb config
+sidebar_label: config
 description: Show, validate, edit and reload LynxDB configuration, and manage connection profiles.
 ---
 

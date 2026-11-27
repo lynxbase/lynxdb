@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
-title: Histogram
+title: REST API event histogram
+sidebar_label: Histogram
 description: GET /histogram returns event counts per time bucket.
 ---
 
