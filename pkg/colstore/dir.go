@@ -589,7 +589,11 @@ var _ io.Writer = (*PartFile)(nil)
 // ones in one manifest record, so a crash leaves either all of the change
 // or none of it. It returns the handles of the added parts; when it fails,
 // the table is unchanged and the files of the added parts are gone.
-func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err error) {
+func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
+	return d.commit(add, remove, d.table.Apply)
+}
+
+func (d *Dir) commit(add []*PartFile, remove []*Handle, publish func(add, remove []*Handle) error) (handles []*Handle, err error) {
 	// Files a record may name stay for the next open to judge.
 	recorded := false
 	defer func() {
@@ -664,7 +668,7 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 		delete(d.live, h)
 	}
 	d.retiredMu.Unlock()
-	if err := d.table.Apply(handles, remove); err != nil {
+	if err := publish(handles, remove); err != nil {
 		// The record stands, so the table must follow it or stop.
 		d.failed = fmt.Errorf("%w: %w", ErrFailed, err)
 

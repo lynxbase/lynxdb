@@ -95,7 +95,6 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.syncForRead()
 	stats, ok := s.db.Index(index)
 	if !ok {
 		respondError(w, ErrCodeNotFound, http.StatusNotFound, fmt.Sprintf("index %q not found", index))

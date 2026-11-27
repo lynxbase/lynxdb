@@ -139,7 +139,7 @@ lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
 
 Output: rows go to stdout, statistics and the query's warnings to stderr. On a terminal the statistics are a summary footer (rows, time); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.
 
-The server syncs the events ingested so far before a query, and runs every query as a job; `lynxdb jobs` lists them.
+Server queries see buffered events as soon as ingest acknowledges them. Use `lynxdb jobs` to list queries.
 
 ## explain
 

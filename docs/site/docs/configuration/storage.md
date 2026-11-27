@@ -69,9 +69,9 @@ An index name holds ASCII letters, digits, dots, hyphens and underscores. It mus
 
 ## Writing events
 
-Ingested events wait in memory, then the store writes them as a sorted run. The flusher checks the age of buffered input against `storage.flush_interval`. Full buffers, a sync or graceful shutdown can trigger a flush sooner. The manifest commit makes a run durable, then the store publishes it for queries.
+Ingested events wait in memory, then the store writes them as a sorted run. The flusher checks the age of buffered input against `storage.flush_interval`. Full buffers, a sync or graceful shutdown can trigger a flush sooner. After the manifest commit, the disk parts replace the buffered rows for new queries.
 
-The server syncs before running an HTTP query and attempts to sync before reporting storage stats or the field catalog. Normal ingest can acknowledge rows that are still buffered. See [Acknowledgements and visibility](../architecture/storage.md#acknowledgements-and-visibility).
+HTTP queries can read buffered rows as soon as ingest acknowledges them. Storage stats count these rows and report the bytes in committed parts. See [Acknowledgements and visibility](../architecture/storage.md#acknowledgements-and-visibility).
 
 The store merges runs in the background, so that a query meets few of them. A quiet, closed partition can be merged into one run. See [Merges and snapshots](../architecture/storage.md#merges).
 

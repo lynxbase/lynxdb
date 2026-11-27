@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func getData(t *testing.T, url string) map[string]interface{} {
@@ -27,7 +30,7 @@ func getData(t *testing.T, url string) map[string]interface{} {
 }
 
 func TestStatus_Unified(t *testing.T) {
-	srv, cleanup := startTestServer(t)
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{FlushInterval: config.Duration(time.Hour)}})
 	defer cleanup()
 
 	ingestTestEvents(t, srv.Addr(), 5, 1)
@@ -44,8 +47,8 @@ func TestStatus_Unified(t *testing.T) {
 		t.Fatal("missing uptime_seconds")
 	}
 	storage := data["storage"].(map[string]interface{})
-	if used, _ := storage["used_bytes"].(float64); used <= 0 {
-		t.Fatalf("storage.used_bytes = %v, want > 0", storage["used_bytes"])
+	if used, _ := storage["used_bytes"].(float64); used != 0 {
+		t.Fatalf("storage.used_bytes = %v, want 0 before flush", storage["used_bytes"])
 	}
 	events := data["events"].(map[string]interface{})
 	if events["total"] != float64(5) {
@@ -62,7 +65,7 @@ func TestStatus_Unified(t *testing.T) {
 }
 
 func TestStats_IndexesAndJobs(t *testing.T) {
-	srv, cleanup := startTestServer(t)
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{FlushInterval: config.Duration(time.Hour)}})
 	defer cleanup()
 
 	ingestTestEvents(t, srv.Addr(), 5, 1)
@@ -76,14 +79,18 @@ func TestStats_IndexesAndJobs(t *testing.T) {
 	if data["index_count"] != float64(2) {
 		t.Errorf("index_count = %v, want 2", data["index_count"])
 	}
-	if parts, _ := data["part_count"].(float64); parts < 2 {
-		t.Errorf("part_count = %v, want at least 2", data["part_count"])
+	if parts, _ := data["part_count"].(float64); parts != 0 {
+		t.Errorf("part_count = %v, want 0 before flush", data["part_count"])
 	}
 	for _, key := range []string{"uptime_seconds", "storage_bytes", "oldest_event", "newest_event"} {
 		if data[key] == nil {
 			t.Errorf("missing %s in %v", key, data)
 		}
 	}
+	if err := srv.DB().Sync(); err != nil {
+		t.Fatal(err)
+	}
+	data = getData(t, fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()))
 	if filters, _ := data["filter_bytes"].(float64); filters <= 0 || filters >= data["storage_bytes"].(float64) {
 		t.Errorf("filter_bytes = %v of storage_bytes %v, want a part of it", data["filter_bytes"], data["storage_bytes"])
 	}

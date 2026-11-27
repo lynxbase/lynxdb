@@ -86,8 +86,7 @@ done
 echo "  Seed complete: 2M events ingested."
 echo ""
 
-# /api/v1/stats writes the buffered events before it counts them.
-echo "=== Stored events ==="
+echo "=== Events and disk usage ==="
 curl -sf "$BASE/api/v1/stats" | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print('  Events: %d, parts: %d, bytes: %d' % (d['total_events'], d['part_count'], d['storage_bytes']))"
 echo ""
 

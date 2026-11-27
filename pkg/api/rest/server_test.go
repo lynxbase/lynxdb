@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
@@ -241,7 +242,7 @@ func TestServer_RootIsESCompatible(t *testing.T) {
 }
 
 func TestServer_ListIndexes(t *testing.T) {
-	srv, cleanup := startTestServer(t)
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{FlushInterval: config.Duration(time.Hour)}})
 	defer cleanup()
 
 	listIndexes := func() []interface{} {
@@ -277,8 +278,8 @@ func TestServer_ListIndexes(t *testing.T) {
 	if main["events"] != float64(5) {
 		t.Errorf("events = %v, want 5", main["events"])
 	}
-	if parts, _ := main["parts"].(float64); parts < 1 {
-		t.Errorf("parts = %v, want at least 1", main["parts"])
+	if parts, _ := main["parts"].(float64); parts != 0 {
+		t.Errorf("parts = %v, want 0 before flush", main["parts"])
 	}
 	for _, key := range []string{"bytes", "first_event", "last_event"} {
 		if _, ok := main[key]; !ok {

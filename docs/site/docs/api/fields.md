@@ -7,7 +7,7 @@ description: The field catalog and the top values of a field.
 
 # Fields API
 
-These endpoints describe stored data for field lists and completion. Any valid key can call them when authentication is on. Like a query, each one first writes the events ingested so far.
+These endpoints describe stored data for field lists and completion. Any valid key can call them when authentication is on. Listing fields first syncs the open stores. Field-value queries also see buffered events.
 
 ## GET /fields
 

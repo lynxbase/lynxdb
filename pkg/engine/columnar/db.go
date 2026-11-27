@@ -219,6 +219,15 @@ func (db *DB) Sync() error {
 	return errors.Join(errs...)
 }
 
+// SyncIndex makes the events appended to index so far durable.
+func (db *DB) SyncIndex(index string) error {
+	s, err := db.store(index, false)
+	if err != nil || s == nil {
+		return err
+	}
+	return s.Sync()
+}
+
 // all returns the stores of the indexes.
 func (db *DB) all() []*colstore.Store {
 	db.mu.RLock()
@@ -255,20 +264,14 @@ func (db *DB) Names() []string {
 	return names
 }
 
-// Query runs a plan over the indexes. It first writes what was appended to
-// the indexes the plan reads, so that the query sees every event taken
-// before it; an index whose events could not be written is read as it is on
-// disk, and the result says so in a warning.
+// Query runs a plan over the disk parts and buffered rows of its indexes.
 func (db *DB) Query(ctx context.Context, plan *ir.Plan, opts Options) (*Result, error) {
-	sources, behind := db.querySources(plan, opts.DefaultSource)
+	sources, err := db.querySources(ctx, plan, opts.DefaultSource)
 	defer sources.release()
-	res, err := Run(ctx, plan, sources, opts)
 	if err != nil {
 		return nil, err
 	}
-	res.Warnings = append(behind, res.Warnings...)
-
-	return res, nil
+	return Run(ctx, plan, sources, opts)
 }
 
 // queryTables pins one version of each source for every scan of the query,
@@ -297,9 +300,9 @@ func (t queryTables) release() {
 	}
 }
 
-func (db *DB) querySources(plan *ir.Plan, defaultSource string) (queryTables, []string) {
+func (db *DB) querySources(ctx context.Context, plan *ir.Plan, defaultSource string) (queryTables, error) {
 	tables := queryTables{parts: make(map[string]*colstore.Snapshot), names: sync.OnceValue(db.Names)}
-	var warnings []string
+	var pinErr error
 	pin := func(sources []ir.Source) {
 		names, _ := sourceNames(sources, defaultSource, tables.Names)
 		for _, name := range names {
@@ -311,13 +314,16 @@ func (db *DB) querySources(plan *ir.Plan, defaultSource string) (queryTables, []
 				tables.parts[name] = nil
 				continue
 			}
-			if err := s.Sync(); err != nil {
-				warnings = append(warnings, fmt.Sprintf("index %s: its latest events are not searchable yet: %v", name, err))
+			tables.parts[name], pinErr = s.ReadSnapshot(ctx)
+			if pinErr != nil {
+				return
 			}
-			tables.parts[name] = s.Table().Snapshot()
 		}
 	}
 	ir.WalkPlan(plan.Root, func(n ir.Node) bool {
+		if pinErr != nil {
+			return false
+		}
 		switch x := n.(type) {
 		case *ir.Scan:
 			pin(x.Sources)
@@ -328,7 +334,7 @@ func (db *DB) querySources(plan *ir.Plan, defaultSource string) (queryTables, []
 		return true
 	})
 
-	return tables, warnings
+	return tables, pinErr
 }
 
 // IndexStats describes what an index holds.
@@ -370,24 +376,24 @@ func (db *DB) Index(name string) (IndexStats, bool) {
 	if closed || s == nil {
 		return IndexStats{}, false
 	}
-	snap := s.Table().Snapshot()
+	snap, buffered := s.StatsSnapshot()
 	defer snap.Release()
-	st := IndexStats{Name: name, Settings: settings}
+	st := IndexStats{Name: name, Rows: buffered.Rows, Settings: settings}
 	st.Merges, st.RunsToMerge = s.MergeState()
-	first, last := int64(0), int64(0)
-	for i, h := range snap.Parts() {
+	first, last := buffered.First, buffered.Last
+	for _, h := range snap.Parts() {
+		if st.Rows == 0 || h.MinTime < first {
+			first = h.MinTime
+		}
+		if st.Rows == 0 || h.MaxTime > last {
+			last = h.MaxTime
+		}
 		st.Rows += h.Rows
 		st.Bytes += int64(h.Size())
 		st.FilterBytes += h.FilterBytes()
 		st.Parts++
-		if i == 0 || h.MinTime < first {
-			first = h.MinTime
-		}
-		if i == 0 || h.MaxTime > last {
-			last = h.MaxTime
-		}
 	}
-	if st.Parts != 0 {
+	if st.Rows != 0 {
 		st.First, st.Last = time.Unix(0, first).UTC(), time.Unix(0, last).UTC()
 	}
 

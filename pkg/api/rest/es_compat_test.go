@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 )
@@ -97,11 +98,14 @@ func TestESBulk_BasicIndex(t *testing.T) {
 }
 
 func TestESBulk_DurableBeforeSuccess(t *testing.T) {
-	srv, cleanup := startTestServerWithConfig(t, Config{DataDir: t.TempDir()})
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{FlushInterval: config.Duration(time.Hour)}})
 	defer cleanup()
 
+	ingestNDJSON(t, srv.Addr(), "other", `{"message":"buffered"}`)
 	body := `{"index":{"_index":"logs"}}
 {"message":"durable","level":"info"}
+{"create":{"_index":"second"}}
+{"message":"durable too"}
 `
 	resp := postESBulk(t, srv.Addr(), body)
 	result := decodeESBulkResponse(t, resp)
@@ -114,6 +118,12 @@ func TestESBulk_DurableBeforeSuccess(t *testing.T) {
 	ix, ok := indexStats(srv, "logs")
 	if !ok || ix.Rows != 1 || ix.Parts == 0 {
 		t.Fatalf("logs after successful bulk: %+v, want 1 row written", ix)
+	}
+	if ix, ok := indexStats(srv, "other"); !ok || ix.Rows != 1 || ix.Parts != 0 {
+		t.Fatalf("unrelated index: %+v", ix)
+	}
+	if ix, ok := indexStats(srv, "second"); !ok || ix.Rows != 1 || ix.Parts != 1 {
+		t.Fatalf("second bulk index: %+v", ix)
 	}
 	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 1 {
 		t.Fatalf("logs events immediately after bulk: got %d, want 1", n)

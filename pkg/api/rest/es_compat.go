@@ -359,8 +359,8 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		hasErrors = true
 	}
 	// Shippers count a 200 as stored, so the documents are durable first.
-	if err := s.db.Sync(); err != nil {
-		if respondIngestError(w, err) {
+	for _, index := range order {
+		if len(byIndex[index].items) > 0 && respondIngestError(w, s.db.SyncIndex(index)) {
 			return
 		}
 	}

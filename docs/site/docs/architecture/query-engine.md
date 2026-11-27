@@ -99,7 +99,7 @@ Optimizer rules:
 
 ## Running a Query
 
-The standard HTTP query endpoint syncs the open stores and submits a job to `pkg/database`. The [Query API](../api/query.md) describes how synchronous, asynchronous and hybrid requests wait for that job. The NDJSON endpoint syncs and calls `DB.Query` in the request context, then writes the result. Both execution paths use the `query.max_concurrent` slots and return `429 TOO_MANY_REQUESTS` when all slots are occupied.
+The standard HTTP query endpoint submits a job to `pkg/database`. The [Query API](../api/query.md) describes how synchronous, asynchronous and hybrid requests wait for that job. The NDJSON endpoint calls `DB.Query` in the request context, then writes the result. Both execution paths use the `query.max_concurrent` slots and return `429 TOO_MANY_REQUESTS` when all slots are occupied.
 
 The database intersects each scan's time range, including scans in subqueries, with the request's `[from, to)` interval. It then passes the plan to `pkg/engine/columnar`.
 

@@ -158,6 +158,7 @@ type Store struct {
 	loopFlushes    sync.WaitGroup
 	takeMu         sync.Mutex
 	flushSeq       uint64
+	reading        []*flushRecord // taken batches not yet published as disk parts, under takeMu
 	unwritten      []*shred.Batch
 	unwrittenBytes int64
 	unwrittenSeqs  []uint64
@@ -319,6 +320,8 @@ type appendShard struct {
 	since    time.Time
 	errs     []shred.LineError
 	sizes    []shred.ColumnSize
+	view     batchView
+	events   EventRange
 }
 
 // appendPiece is the most input Append shreds before it looks at the
@@ -362,9 +365,8 @@ type Appended struct {
 
 // AppendRows buffers the documents of lines, one per line, that arrived at
 // the time at, in unix nanoseconds, which becomes the time of every row that
-// carries none. It is safe for concurrent use; the rows become durable and
-// visible within the flush interval, or as soon as the buffers are full, or
-// on Sync.
+// carries none. ReadSnapshot sees the rows on return. Sync, the flush interval
+// or a full buffer makes them durable. Concurrent calls are safe.
 func (s *Store) AppendRows(lines []byte, at int64, in Intake) (Appended, error) {
 	var done Appended
 	// Close waits for the calls under way, so that it writes all the rows
@@ -495,6 +497,7 @@ func (s *Store) appendPiece(lines []byte, at int64, in shred.Intake) Appended {
 	if sh.buffered == 0 {
 		sh.since = time.Now()
 	}
+	sh.events.addTimes(sh.batch.Times[before:])
 	sh.buffered += len(lines)
 	s.buffered.Add(int64(len(lines)))
 	s.appended.Add(1)
@@ -610,6 +613,10 @@ const flushSlots = 2
 // it took. durable is set once its rows are, by it or by a later flush that
 // took them over; err is what it met while they are not.
 type flushRecord struct {
+	batches []*shred.Batch
+	sorted  chan struct{} // closed after the last in-place change to batches
+	view    []readBlock
+	events  EventRange
 	seq     uint64
 	found   uint64
 	ended   bool
@@ -644,8 +651,8 @@ func (s *Store) writeBuffers(age time.Duration, full bool) error {
 	if len(taken) > 0 {
 		s.flushWrites.Add(1)
 		var files []*PartFile
-		if files, err = s.writeRuns(taken); err == nil {
-			if _, err = s.dir.Commit(files, nil); err == nil {
+		if files, err = s.writeRuns(taken, rec.sorted); err == nil {
+			if err = s.publishFlush(rec, files); err == nil {
 				s.noteArrival(files)
 			}
 		}
@@ -718,6 +725,8 @@ func (s *Store) takeBuffers(age time.Duration, full bool) (rec *flushRecord, tak
 			if sh.batch.Rows > 0 {
 				sh.sizes = sh.batch.Sizes(sh.sizes[:0])
 				taken = append(taken, sh.batch)
+				rec.events.add(sh.events)
+				sh.events, sh.view = EventRange{}, batchView{}
 				sh.batch = nil
 			}
 			sh.buffered, sh.since = 0, time.Time{}
@@ -726,6 +735,17 @@ func (s *Store) takeBuffers(age time.Duration, full bool) (rec *flushRecord, tak
 	}
 	s.flushSeq++
 	rec.seq = s.flushSeq
+	if len(taken) > 0 {
+		rec.batches, rec.sorted = taken, make(chan struct{})
+		for i := len(s.reading) - 1; i >= 0 && len(covers) > 0; i-- {
+			old := s.reading[i]
+			if slices.Contains(covers, old.seq) {
+				rec.events.add(old.events)
+				s.forgetFlush(old)
+			}
+		}
+		s.reading = append(s.reading, rec)
+	}
 	s.pendingMu.Lock()
 	s.pending = append(s.pending, rec)
 	s.pendingMu.Unlock()

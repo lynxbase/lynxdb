@@ -26,6 +26,9 @@ func TestE2E_Status_ReturnsServerInfo(t *testing.T) {
 	h := NewHarness(t)
 	ctx := context.Background()
 	ingestThreeEvents(t, h)
+	if err := h.srv.DB().Sync(); err != nil {
+		t.Fatal(err)
+	}
 
 	status, err := h.Client().Status(ctx)
 	if err != nil {
@@ -69,6 +72,9 @@ func TestE2E_Stats_ReturnsIndexes(t *testing.T) {
 		}
 	}
 
+	if err := h.srv.DB().Sync(); err != nil {
+		t.Fatal(err)
+	}
 	indexes, err := h.Client().Indexes(ctx)
 	if err != nil {
 		t.Fatalf("Indexes: %v", err)

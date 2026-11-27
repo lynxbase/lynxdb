@@ -1596,7 +1596,7 @@ func (w *Writer) Close() error {
 	w.write(trailer[:])
 	w.dropPlans()
 	writerPool.Put(w.writerBuffers)
-	w.writerBuffers, w.verifiedGroup = nil, nil
+	w.writerBuffers, w.verifiedGroup, w.w = nil, nil, nil
 	err := w.err
 	if err == nil {
 		w.err = errClosed

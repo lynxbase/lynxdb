@@ -160,8 +160,11 @@ func (db *DB) appendRows(index string, lines []byte, in colstore.Intake) (colsto
 // for being older than the retention.
 func (db *DB) Expired() int64 { return db.expired.Load() }
 
-// Sync makes the events appended so far durable and visible.
+// Sync makes the events appended so far durable.
 func (db *DB) Sync() error { return db.core.Sync() }
+
+// SyncIndex makes the events appended to index so far durable.
+func (db *DB) SyncIndex(index string) error { return db.core.SyncIndex(index) }
 
 // Stats describes every index in the order of their names.
 func (db *DB) Stats() []columnar.IndexStats { return db.core.Stats() }

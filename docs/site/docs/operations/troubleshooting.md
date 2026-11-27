@@ -209,7 +209,7 @@ See [Performance Tuning](/docs/operations/performance-tuning#query-shape).
 
 ### Events Do Not Appear
 
-A query syncs the database before it runs, so it sees every event whose ingest request was answered. When events are missing:
+A query sees every event acknowledged before it started, including events still buffered. When events are missing:
 
 - Check the response of the ingest request: `accepted` counts the events stored. A line that is not a JSON object is kept as an event holding the text in `_raw`, so search for its text rather than for fields.
 - Check the index: `?index=` and `X-Index` choose it for `/api/v1/ingest` and `/api/v1/ingest/raw`, the bulk `_index` for Elasticsearch shippers. `lynxdb indexes` lists the names.
