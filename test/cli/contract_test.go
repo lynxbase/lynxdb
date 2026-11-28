@@ -141,7 +141,7 @@ func TestNewestEventsInTimeRange(t *testing.T) {
 	srv := startServer(t)
 	ingestFile(t, srv, path)
 	for _, base := range [][]string{{"query", "--file", path}, {"--server", srv.BaseURL, "query"}} {
-		for _, args := range [][]string{{"--since", "1h", "source=main | fields id | head 3"}, {"source=main earliest=-1h | head 3 | fields id"}} {
+		for _, args := range [][]string{{"--since", "1h", "source=main | fields id | head 3"}, {"source=main earliest=-1h | head 3 | fields id"}, {"source=main earliest=-1h | eventstats count() as n | head 3 | fields id"}, {"source=main earliest=-1h | streamstats count() as seq | head 3 | fields id"}} {
 			r := runLynxDB(t, append(append(slices.Clone(base), "--format", "json"), args...)...)
 			if r.ExitCode != 0 {
 				t.Fatal(r.Stderr)

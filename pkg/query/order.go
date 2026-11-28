@@ -43,7 +43,7 @@ func eventOrder(n ir.Node, needed bool) ir.Node {
 			}
 		}
 	case *ir.Project, *ir.Compute, *ir.RenameColumns, *ir.Extract, *ir.FillNull,
-		*ir.Unnest, *ir.FlattenObject, *ir.Reverse, *ir.Dedup:
+		*ir.Unnest, *ir.FlattenObject, *ir.Reverse, *ir.Dedup, *ir.Window:
 	default:
 		needed = false
 	}

@@ -200,7 +200,7 @@ source=main | streamstats current=false count() as before by host
 source=main | streamstats window=5 global=false avg(response_time) as moving by host
 ```
 
-Running aggregates in input order. LynxDB supports `current`, `window` and
+Running aggregates in input order. An event search supplies newest-first input. Use an ascending `sort _time` before `streamstats` to accumulate from oldest to newest. LynxDB supports `current`, `window` and
 `global=false`. `window` with `global=true` (the default) and a `by` clause,
 `time_window`, `reset_before`, `reset_after`, and `bucket_nullable=false`
 with a `by` clause fail with `UNSUPPORTED_FEATURE`.
