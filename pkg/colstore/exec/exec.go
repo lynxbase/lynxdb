@@ -303,7 +303,6 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	}
 	for _, w := range active {
 		res.MatchedAll = res.MatchedAll && !w.partialCount
-		res.Stats.SkippedByTime += w.pagePruned
 		res.Stats.SkippedByStats += w.undecoded
 		res.Stats.ColumnsSearched += w.searched
 		res.Stats.ColumnsSkippedByToken += w.unsearched
@@ -420,7 +419,6 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 		if floor != math.MinInt64 {
 			w.partialCount = true
 			if v == none {
-				w.pagePruned++
 				if x.condition != "" {
 					p.Misses(x.condition).SetLatest(b.Index(), floor-1)
 				}

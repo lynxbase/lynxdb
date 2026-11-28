@@ -33,6 +33,10 @@ func TestFirstRowsOfAWordOpenTheSameBlocks(t *testing.T) {
 		s := latestStore(t, filepath.Join(t.TempDir(), store.name), rows, days, blockRows, oneIn, store.sortKey)
 		snap := s.Table().Snapshot()
 		t.Logf("%s: %s", store.name, describeStore(snap))
+		var totalBlocks int64
+		for _, h := range snap.Parts() {
+			totalBlocks += int64(h.NumBlocks())
+		}
 		for _, c := range []struct {
 			name, text string
 			limit      int
@@ -85,6 +89,9 @@ func TestFirstRowsOfAWordOpenTheSameBlocks(t *testing.T) {
 						t.Fatalf("run %d: rows\n%s\nwant\n%s", i, strings.Join(got, "\n"), strings.Join(want, "\n"))
 					}
 					st := res.Stats
+					if n := st.Blocks + st.SkippedByTime + st.SkippedByKey + st.SkippedByToken + st.SkippedAsEmpty; n > totalBlocks {
+						t.Fatalf("%d blocks opened or skipped in a snapshot of %d", n, totalBlocks)
+					}
 					st.HeldBytes = 0
 					if i == 0 {
 						first = st

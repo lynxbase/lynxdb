@@ -117,7 +117,6 @@ type worker struct {
 	place int64
 
 	blocks, matched, undecoded int64
-	pagePruned                 int64
 	partialCount               bool
 	// searched and unsearched count the columns that matches over every
 	// string column decoded and those that a token filter spared them.
