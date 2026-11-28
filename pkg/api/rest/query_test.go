@@ -53,6 +53,7 @@ func TestEventPageLookahead(t *testing.T) {
 		{"source=main | where status >= 202", 2, 0, 3, 2, true},
 		{"source=main", 2, 3, 5, 2, false},
 		{"source=main", 2, 100, 5, 0, false},
+		{"source=main", 2, math.MaxInt - 3, 5, 0, false},
 		{"source=main | head 0", 2, 0, 0, 0, false},
 		{"source=main | head 2 from 2", 2, 0, 2, 2, false},
 		{"source=main | head 2", 2, 0, 2, 2, false},

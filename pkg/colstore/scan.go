@@ -649,11 +649,22 @@ func (r *scanRun) grow(wave, done int) int {
 	}
 	have, want := r.opts.Kept()
 	if have > 0 && want > have && done > 0 {
-		need := int64(want-have)*int64(done)/int64(have)*3/2 + 1
-		wave = max(wave, int(min(need, int64(r.workers))))
+		wave = max(wave, estimateBlocks(want-have, done, have, r.workers))
 	}
 
 	return wave
+}
+
+// estimateBlocks allows half a round of slack at the observed match rate.
+// A page can ask for nearly MaxInt rows. Cap the estimate before converting
+// it to a count of blocks.
+func estimateBlocks(missing, scanned, matched, capBlocks int) int {
+	need := float64(missing) * float64(scanned) / float64(matched)
+	if need >= float64(capBlocks) {
+		return capBlocks
+	}
+	n := int(need)
+	return n + min(n/2+1, capBlocks-n)
 }
 
 // byTime scans the units in the order of time, as far as the bound leaves
@@ -853,8 +864,7 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 		}
 		have, want := r.opts.Kept()
 		if gained := have - had; gained > 0 && have < want {
-			need := max(int64(want-have)*int64(opened)/int64(have), int64(want-have)*int64(take)/int64(gained))
-			round = int(min(need+need/2+1, int64(most)))
+			round = max(estimateBlocks(want-have, opened, have, most), estimateBlocks(want-have, take, gained, most))
 		} else {
 			round = min(2*round, most)
 		}
