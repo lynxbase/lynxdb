@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -78,14 +79,32 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	s.executeQuery(w, r, QueryRequest{
+	var exact bool
+	if value := r.URL.Query().Get("exact_total"); value != "" {
+		var err error
+		exact, err = strconv.ParseBool(value)
+		if err != nil {
+			respondError(w, ErrCodeValidationError, http.StatusBadRequest, "exact_total must be a boolean")
+			return
+		}
+	}
+	req := QueryRequest{ExactTotal: exact,
 		Q:      q,
 		From:   r.URL.Query().Get("from"),
 		To:     r.URL.Query().Get("to"),
-		Limit:  parseIntParam(r, "limit", 0),
-		Offset: parseIntParam(r, "offset", 0),
 		Format: format,
-	})
+	}
+	for name, dst := range map[string]*int{"offset": &req.Offset, "limit": &req.Limit} {
+		if value := r.URL.Query().Get(name); value != "" {
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				respondError(w, ErrCodeValidationError, http.StatusBadRequest, name+" must be a supported integer")
+				return
+			}
+			*dst = n
+		}
+	}
+	s.executeQuery(w, r, req)
 }
 
 // handleQuery is the three-mode query handler (sync/hybrid/async).
@@ -132,6 +151,17 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 		return
 	}
 
+	if limit > 0 && (req.Wait == nil || *req.Wait > 0) {
+		offset := max(req.Offset, 0)
+		if offset >= math.MaxInt-limit {
+			respondError(w, ErrCodeValidationError, http.StatusBadRequest, "offset + limit + 1 exceeds the supported range")
+			return
+		}
+		if !req.ExactTotal {
+			cq.opts.PageBound = offset + limit + 1
+		}
+	}
+
 	job, err := s.submit(cq)
 	if err != nil {
 		respondQueryFailure(w, err)
@@ -162,12 +192,11 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 		return
 	case <-timer.C:
 		// A job that ended as the timer fired is answered in full.
-		select {
-		case <-job.Done():
-		default:
+		if job.Detach() {
 			writeJobHandle(w, job)
 			return
 		}
+		<-job.Done()
 	}
 	res, err := job.Result()
 	// The request takes the whole answer, so nothing reads the job later.
@@ -177,7 +206,7 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 		return
 	}
 	st := job.Status()
-	meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(job.ID), WithRows(res.Len()), WithWarnings(res.Warnings)}
+	meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(job.ID), WithRowCount(st.Rows, st.RowsPartial), WithWarnings(res.Warnings)}
 	if stats, ok := res.Stats(); ok {
 		meta = append(meta, WithStats(stats))
 	}
@@ -264,8 +293,8 @@ func appendResultData(dst []byte, res *columnar.Result, rt ResultType, limit, of
 // appendEventsData appends {"type":"events","events":[...],"total":N,"has_more":b}
 // with each event written straight from the result.
 func appendEventsData(dst []byte, res *columnar.Result, limit, offset int) []byte {
-	total := res.Len()
-	start, end, hasMore := pageRange(total, limit, offset)
+	total, exact := res.Total()
+	start, end, hasMore := pageRange(res.Len(), limit, offset)
 	dst = append(dst, `{"type":"events","events":[`...)
 	for i := start; i < end; i++ {
 		if i > start {
@@ -275,6 +304,9 @@ func appendEventsData(dst []byte, res *columnar.Result, limit, offset int) []byt
 	}
 	dst = append(dst, `],"total":`...)
 	dst = strconv.AppendInt(dst, int64(total), 10)
+	if !exact {
+		dst = append(dst, `,"total_exact":false`...)
+	}
 	dst = append(dst, `,"has_more":`...)
 	dst = strconv.AppendBool(dst, hasMore)
 

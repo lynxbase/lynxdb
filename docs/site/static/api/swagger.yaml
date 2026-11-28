@@ -210,6 +210,10 @@ paths:
             type: integer
             default: 1000
             maximum: 50000
+        - name: exact_total
+          in: query
+          schema: {type: boolean, default: false}
+          description: Count all matches before paging.
         - name: offset
           in: query
           schema:
@@ -1765,7 +1769,11 @@ components:
           type: string
         rows:
           type: integer
-          description: Rows the query produced, before `offset` and `limit`
+          description: Known rows before pagination. The count is exact unless rows_exact is false.
+        rows_exact:
+          type: boolean
+          default: true
+          description: False when rows is a lower bound.
         warnings:
           type: array
           items:
@@ -1841,6 +1849,10 @@ components:
           description: Default `query.default_result_limit` (1000), capped at `query.max_result_limit` (50000)
         offset:
           type: integer
+        exact_total:
+          type: boolean
+          default: false
+          description: Count every matching event before pagination.
         wait:
           type: number
           nullable: true
@@ -1877,6 +1889,11 @@ components:
             type: object
         total:
           type: integer
+          description: Known matches before pagination.
+        total_exact:
+          type: boolean
+          default: true
+          description: False when total is a lower bound.
         has_more:
           type: boolean
     AggregateResult:
@@ -1896,6 +1913,7 @@ components:
             items: {}
         total_rows:
           type: integer
+          description: Exact number of aggregate rows before pagination.
         has_more:
           type: boolean
     QueryResponse:

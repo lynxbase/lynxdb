@@ -3,10 +3,13 @@
 package cli_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestContract_EnvServer_Override(t *testing.T) {
@@ -122,5 +125,34 @@ func TestContract_FailOnEmpty_FileMode(t *testing.T) {
 	if r.ExitCode != 6 {
 		t.Errorf("expected exit code 6 (no results with --fail-on-empty), got %d\nstderr: %s",
 			r.ExitCode, r.Stderr)
+	}
+}
+
+func TestNewestEventsInTimeRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.ndjson")
+	now := time.Now().UTC().Truncate(time.Second)
+	var data strings.Builder
+	for i, age := range []int{2, 120, 1, 1, 5} {
+		fmt.Fprintf(&data, `{"timestamp":%q,"id":%d}`+"\n", now.Add(-time.Duration(age)*time.Minute).Format(time.RFC3339), i)
+	}
+	if err := os.WriteFile(path, []byte(data.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := startServer(t)
+	ingestFile(t, srv, path)
+	for _, base := range [][]string{{"query", "--file", path}, {"--server", srv.BaseURL, "query"}} {
+		for _, args := range [][]string{{"--since", "1h", "source=main | fields id | head 3"}, {"source=main earliest=-1h | head 3 | fields id"}, {"source=main earliest=-1h | eventstats count() as n | head 3 | fields id"}, {"source=main earliest=-1h | streamstats count() as seq | head 3 | fields id"}} {
+			r := runLynxDB(t, append(append(slices.Clone(base), "--format", "json"), args...)...)
+			if r.ExitCode != 0 {
+				t.Fatal(r.Stderr)
+			}
+			var ids []int
+			for _, row := range mustParseJSON(t, r.Stdout) {
+				ids = append(ids, int(row["id"].(float64)))
+			}
+			if !slices.Equal(ids, []int{2, 3, 0}) {
+				t.Errorf("%v %v: IDs %v", base, args, ids)
+			}
+		}
 	}
 }

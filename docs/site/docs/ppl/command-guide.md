@@ -151,6 +151,8 @@ source=main | head 10 from 20
 source=main | reverse
 ```
 
+Event searches return matching rows by descending `_time`. Equal timestamps follow the row positions of the pinned snapshot.
+
 `sort` is stable; NULLs sort first in ascending order and last in
 descending order. `ip(field)` sorts by the text form of the address. `head`
 defaults to 10 rows; `from` skips rows first. LynxDB turns `sort` followed by
@@ -198,7 +200,7 @@ source=main | streamstats current=false count() as before by host
 source=main | streamstats window=5 global=false avg(response_time) as moving by host
 ```
 
-Running aggregates in input order. LynxDB supports `current`, `window` and
+Running aggregates in input order. An event search supplies newest-first input. Use an ascending `sort _time` before `streamstats` to accumulate from oldest to newest. LynxDB supports `current`, `window` and
 `global=false`. `window` with `global=true` (the default) and a `by` clause,
 `time_window`, `reset_before`, `reset_after`, and `bucket_nullable=false`
 with a `by` clause fail with `UNSUPPORTED_FEATURE`.

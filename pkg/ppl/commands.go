@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -278,6 +279,9 @@ func (c *compiler) command(st *pipe, cmd ast.Command) error {
 	case *ast.HeadCommand:
 		if n.Count < 0 || n.From < 0 {
 			return semanticErr(n, "head size and offset must not be negative")
+		}
+		if n.Count > math.MaxInt-n.From {
+			return semanticErr(n, "head size plus offset exceeds the supported range")
 		}
 		st.node = &ir.Limit{Input: st.node, Count: n.Count, Offset: n.From}
 	case *ast.BinCommand:

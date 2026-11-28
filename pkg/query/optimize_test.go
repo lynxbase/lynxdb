@@ -31,7 +31,7 @@ func TestOptimizerRules(t *testing.T) {
 		{"source=logs | sort - bytes | head 5",
 			[]string{"TopN(5, bytes DESC NULLS LAST)"}},
 		{"source=logs | fields host | head 3",
-			[]string{"limit=3", "columns=[_time, host]"}},
+			[]string{"TopN(3, _time DESC NULLS LAST)", "columns=[_time, host]"}},
 		{"source=logs | where 1 + 1 = 2 | stats count() by host",
 			[]string{"columns=[_time, host]"}},
 		{"source=logs | eval x = abs(-3) * 2",

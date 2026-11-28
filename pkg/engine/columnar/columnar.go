@@ -63,9 +63,11 @@ type Result struct {
 	// error, such as a field that none of the indexes it reads holds.
 	Warnings []string
 
-	rows   []map[string]event.Value
-	table  *exec.Result
-	schema ir.Schema
+	total   int
+	partial bool
+	rows    []map[string]event.Value
+	table   *exec.Result
+	schema  ir.Schema
 }
 
 // pushedSource starts the name of the source that stands for a part of a
@@ -102,6 +104,14 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 		out.table, out.schema, out.Columnar = r.ran[scan.Sources[0].Name].table, plan.Root.Schema(), true
 
 		return out, nil
+	}
+	// A row sort breaks ties by input position. Read its source in snapshot
+	// order when the sort could not run in the columnar executor.
+	for at := root; len(at.Inputs()) == 1; at = at.Inputs()[0] {
+		switch at.(type) {
+		case *ir.Sort, *ir.TopN:
+			r.opts.Workers = 1
+		}
 	}
 	iter, err := physical.Build(&ir.Plan{Root: root}, physical.Options{
 		Source:    r.source,

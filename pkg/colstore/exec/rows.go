@@ -1,6 +1,10 @@
 package exec
 
-import "github.com/lynxbase/lynxdb/pkg/vec"
+import (
+	"slices"
+
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
 
 // rowScratch is the memory a worker keeps between queries for plans that
 // return rows.
@@ -30,6 +34,16 @@ func (w *worker) project(n int, idx []uint32) error {
 	}
 	if w.x.emit != nil {
 		return w.x.emit(s.batch, n)
+	}
+	if w.q.byTime < 0 && w.x.condition != "" && n < w.rows {
+		// All selected times are still present here, before the heap
+		// discards rows outside its bound.
+		c := &s.batch[w.q.timeCol]
+		if c.kind == vec.KindInt {
+			if last := slices.Max(c.ints[:n]); last < w.b.MaxTime {
+				w.p.Misses(w.x.condition).SetLatest(w.b.Index(), last)
+			}
+		}
 	}
 	w.sink.add(s.batch)
 

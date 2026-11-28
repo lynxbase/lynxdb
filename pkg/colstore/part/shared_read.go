@@ -264,8 +264,20 @@ func (b *Block) AheadRows(ref *ColumnRef, rows []uint32) error {
 // dst hold an unspecified value. Of a shared column it reads the codes and
 // the strings of those rows and no others, so that a few rows cost a few
 // pages of the dictionary and not most of them, and asks for those pages
-// together before it reads the first.
+// together before it reads the first. For a small selection, timed and
+// packed columns spell only the requested strings.
 func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error {
+	if !ref.bad && len(rows) <= b.Rows/8 && (ref.Kind == vec.KindString || ref.Kind == vec.KindVariant) {
+		switch ref.enc {
+		case encTimed:
+			return b.decodeTimedRows(ref, rows, dst)
+		case encFlat:
+			body, rawLen, stride, ok := packedBody(b.data[ref.off:ref.off+ref.length], ref.flags&flagSparse != 0)
+			if ok {
+				return b.decodePackedRows(ref, rows, dst, body, rawLen, stride)
+			}
+		}
+	}
 	if !ref.Shared() {
 		return b.Decode(ref, dst)
 	}
@@ -305,6 +317,36 @@ func (b *Block) DecodeRows(ref *ColumnRef, rows []uint32, dst *vec.Column) error
 	dst.Data = data
 
 	return nil
+}
+
+// selectedStrings lays out values from a random-access encoding at their
+// original row positions. A sparse column numbers only the present values.
+func (b *Block) selectedStrings(rows []uint32, dst *vec.Column, appendValue func([]byte, int) []byte) {
+	b.pos = append(b.pos[:0], rows...)
+	slices.Sort(b.pos)
+	b.pos = slices.Compact(b.pos)
+	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
+	dst.Offsets = grow(dst.Offsets, b.Rows+1)
+	data := dst.Data[:0]
+	at := 0
+	for _, row := range b.pos {
+		r := int(row)
+		if row >= uint32(b.Rows) || !dst.IsValid(r) {
+			continue
+		}
+		for ; at <= r; at++ {
+			dst.Offsets[at] = uint32(len(data))
+		}
+		i := r
+		if dst.Valid != nil {
+			i = dst.Valid.Rank(r)
+		}
+		data = appendValue(data, i)
+	}
+	for ; at <= b.Rows; at++ {
+		dst.Offsets[at] = uint32(len(data))
+	}
+	dst.Data = data
 }
 
 // findShared is FindEqual for a shared column: it looks want up in the

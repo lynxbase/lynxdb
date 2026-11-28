@@ -37,6 +37,7 @@ Each query pins the buffered events and disk parts of its source indexes. It see
 | `earliest`, `latest` | string | Aliases for `from` and `to` |
 | `limit` | integer | Rows to return. Default `query.default_result_limit` (1000), capped at `query.max_result_limit` (50000) |
 | `offset` | integer | Rows to skip before `limit` applies |
+| `exact_total` | boolean | Count all result rows before paging. Defaults to `false` |
 | `wait` | number | Execution mode, see [below](#execution-modes) |
 | `format` | string | `json` or empty. Any other value is a `400 VALIDATION_ERROR`; use [`/query/stream`](#post-querystream) for NDJSON |
 
@@ -55,7 +56,7 @@ Any other value, such as `yesterday`, `1h30m` or `-1h@x`, answers `400 VALIDATIO
 
 ### Event results
 
-A query without an aggregation returns events:
+An event search returns the newest matching events first. An explicit `sort` sets the order for its output. For example, this query returns the three most recent matching errors.
 
 ```bash
 curl -s localhost:3100/api/v1/query \
@@ -79,7 +80,7 @@ curl -s localhost:3100/api/v1/query \
 }
 ```
 
-Each event is a JSON object keyed by field name. An event holds only the fields it has: a field it lacks is absent, not `null`. `total` counts the events the query produced before `offset` and `limit` applied.
+Each event is a JSON object keyed by field name. An event holds only the fields it has: a field it lacks is absent, not `null`. `total` counts events before API pagination. When the search stops before counting every match, `total_exact: false` marks it as a lower bound. See [limits and pagination](#limits-and-pagination).
 
 ### Aggregate results
 
@@ -157,7 +158,12 @@ Poll [`GET /query/jobs/{id}`](#get-queryjobsid) for the result. A job keeps runn
 
 - `limit` defaults to `query.default_result_limit` (1000) and is capped at `query.max_result_limit` (50000). A `limit` of zero or less takes the default.
 - `offset` skips rows before `limit` applies. `has_more` is `true` when rows remain after the returned page.
-- The query itself produces every row; `limit` and `offset` choose which ones the response carries. Use `head` in the query to stop it early.
+- Event searches retain up to `offset + limit + 1` rows. The extra row establishes `has_more`. A PPL `head` limits the query result itself. For example, `head 20` followed by an API limit of 20 returns `has_more: false`.
+- Equal sort keys on events retain their position in the snapshot. For equal timestamps this is source order, part order in each pinned source, then block and row position. Wildcard source names expand alphabetically. Pages of the same snapshot use this rule at every offset. Separate requests acquire fresh snapshots, so writes and compaction between requests can change page boundaries.
+- `total` and `meta.rows` are exact when the executor counts all matches. An early stop reports a lower bound with `total_exact: false` and `meta.rows_exact: false`. Omitted flags mean exact. `has_more` is always exact. Request `exact_total: true` when displaying a page count. Aggregations compute all their groups, and `total_rows` counts the groups before pagination. Streams and retained background jobs count their complete query results.
+- A deep offset retains a longer prefix. Requests whose offset, effective limit and lookahead overflow an integer return `400 VALIDATION_ERROR`.
+
+For example, `{"q":"source=main level=ERROR","limit":20}` can return 20 events with `"total":21,"total_exact":false,"has_more":true`. At least 21 errors matched. A time-ordered scan leaves an older block unread once its latest possible match falls strictly before the last timestamp retained. `meta.stats.skipped_by_time` includes these blocks.
 
 ```bash
 curl -s localhost:3100/api/v1/query \
@@ -263,6 +269,7 @@ Runs a query from query-string parameters, in sync mode, and returns the same en
 | `q` | The PPL query (required) |
 | `from`, `to` | Time range |
 | `limit`, `offset` | Rows to return and rows to skip |
+| `exact_total` | Set to `true` to count all matches |
 | `format` | `json` or empty |
 
 ```bash

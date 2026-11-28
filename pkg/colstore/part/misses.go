@@ -3,15 +3,42 @@ package part
 import "sync/atomic"
 
 // Misses holds the blocks of a part that are known to hold no row passing
-// one condition.
+// one condition, and any tighter upper time bounds established by a
+// newest-first scan of the immutable rows.
 type Misses struct {
-	words []atomic.Uint64
-	used  atomic.Uint64
+	latest atomic.Pointer[[]atomic.Int64]
+	words  []atomic.Uint64
+	used   atomic.Uint64
 }
 
 // Has reports whether block is known to hold no such row.
 func (m *Misses) Has(block int) bool {
 	return m.words[block>>6].Load()&(1<<(block&63)) != 0
+}
+
+// Latest returns the last matching time learned for block, or its original
+// upper bound. Zero represents an unknown bound and simply costs a scan.
+func (m *Misses) Latest(block int, upper int64) int64 {
+	if times := m.latest.Load(); times != nil {
+		if t := (*times)[block].Load(); t != 0 {
+			return min(upper, t)
+		}
+	}
+	return upper
+}
+
+// SetLatest records an upper bound on the timestamps of matches in block.
+func (m *Misses) SetLatest(block int, t int64) {
+	times := m.latest.Load()
+	if times == nil {
+		newTimes := make([]atomic.Int64, len(m.words)*64)
+		if m.latest.CompareAndSwap(nil, &newTimes) {
+			times = &newTimes
+		} else {
+			times = m.latest.Load()
+		}
+	}
+	(*times)[block].Store(t)
 }
 
 // Add notes that block holds no such row.

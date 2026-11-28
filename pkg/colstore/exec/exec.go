@@ -285,7 +285,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 			sinks = append(sinks, &w.sink)
 		}
 	}
-	res := &Result{}
+	res := &Result{MatchedAll: stats.Limited == 0 && err == nil}
 	if res.Columns, res.Rows, err = x.finish(snap, sinks); err != nil {
 		return nil, err
 	}
@@ -302,6 +302,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		res.Stats.CountedByIndex = counted.blocks
 	}
 	for _, w := range active {
+		res.MatchedAll = res.MatchedAll && !w.partialCount
 		res.Stats.SkippedByStats += w.undecoded
 		res.Stats.ColumnsSearched += w.searched
 		res.Stats.ColumnsSkippedByToken += w.unsearched
@@ -411,14 +412,18 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	count, idx := w.rows, []uint32(nil)
 	if q.filter != nil {
-		// Columns are asked for only when the column directory leaves the
-		// filter undecided.
-		if w.decide(q.filter) == some {
-			b.Ahead(w.ahead[:w.filtered])
-		}
-		v, err := w.eval(q.filter, 0)
+		v, floor, err := w.evalBlock()
 		if err != nil {
 			return err
+		}
+		if floor != math.MinInt64 {
+			w.partialCount = true
+			if v == none {
+				if x.condition != "" {
+					p.Misses(x.condition).SetLatest(b.Index(), floor-1)
+				}
+				return nil
+			}
 		}
 		switch s := &w.sels[0]; {
 		case v == none:

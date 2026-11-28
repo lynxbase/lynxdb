@@ -38,10 +38,9 @@ func TestE2E_QueryStream_NDJSON_DeliversEvents(t *testing.T) {
 	if meta == nil || meta.Total != 10 {
 		t.Errorf("expected stream meta total=10, got %+v", meta)
 	}
-	// head without sort follows time order: the log starts at Dec 10 06:55:46.
-	want := "Dec 10 06:55:46 LabSZ sshd[24200]: reverse mapping checking getaddrinfo for ns.marryaldkfaczcz.com [173.234.31.186] failed - POSSIBLE BREAK-IN ATTEMPT!"
+	want := "Dec 10 11:04:45 LabSZ sshd[25539]: Failed password for invalid user user from 103.99.0.122 port 52683 ssh2"
 	if rows[0]["_raw"] != want {
-		t.Errorf("expected the first log line, got %v", rows[0]["_raw"])
+		t.Errorf("expected the newest log line, got %v", rows[0]["_raw"])
 	}
 }
 

@@ -2,6 +2,7 @@ package colstore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -261,6 +262,8 @@ type BlockFunc func(worker int, p *part.Part, b *part.Block) error
 
 // ScanStats counts what a scan skipped and read.
 type ScanStats struct {
+	// Limited counts blocks skipped after enough matches established the time bound.
+	Limited        int64
 	Blocks         int64
 	SkippedByTime  int64
 	SkippedByToken int64
@@ -306,6 +309,49 @@ var scanListsPool = sync.Pool{New: func() any { return new(scanLists) }}
 // block that may hold matching rows; a panic or memory fault in a worker
 // fails the scan instead of the process.
 func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (ScanStats, error) {
+	parts := s.v.parts
+	if opts.ByTime >= 0 || opts.Bound == nil || len(parts) < 2 {
+		return s.scanParts(ctx, parts, opts, fn)
+	}
+	// Build block queues only for parts whose times can still reach the
+	// answer. Overlapping parts share a queue and a cutoff, including
+	// late writes and buffers that span several disk partitions.
+	parts = slices.Clone(parts)
+	slices.SortStableFunc(parts, func(a, b *Handle) int { return cmp.Compare(b.MaxTime, a.MaxTime) })
+	var total ScanStats
+	for len(parts) > 0 {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		if parts[0].MaxTime < opts.Bound.Load() {
+			for _, h := range parts {
+				n := int64(h.NumBlocks())
+				total.SkippedByTime += n
+				total.Limited += n
+			}
+			break
+		}
+		lo, end := parts[0].MinTime, 1
+		for end < len(parts) && parts[end].MaxTime >= lo {
+			lo = min(lo, parts[end].MinTime)
+			end++
+		}
+		st, err := s.scanParts(ctx, parts[:end], opts, fn)
+		total.Blocks += st.Blocks
+		total.SkippedByTime += st.SkippedByTime
+		total.Limited += st.Limited
+		total.SkippedByKey += st.SkippedByKey
+		total.SkippedByToken += st.SkippedByToken
+		total.SkippedAsEmpty += st.SkippedAsEmpty
+		if err != nil {
+			return total, err
+		}
+		parts = parts[end:]
+	}
+	return total, nil
+}
+
+func (s *Snapshot) scanParts(ctx context.Context, parts []*Handle, opts ScanOptions, fn BlockFunc) (ScanStats, error) {
 	minT, maxT := opts.MinTime, opts.MaxTime
 	if minT == 0 && maxT == 0 {
 		minT, maxT = math.MinInt64, math.MaxInt64
@@ -321,7 +367,6 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		clear(lists.empties)
 		scanListsPool.Put(lists)
 	}()
-	parts := s.v.parts
 	units, ids := lists.units[:0], lists.ids[:0]
 	empties := lists.empties[:0]
 	for range parts {
@@ -382,6 +427,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 					continue
 				}
+				if opts.ByTime < 0 && empty != nil {
+					hi = empty.Latest(i, hi)
+				}
 				units = append(units, scanUnit{part: int32(n), block: int32(i), ids: int32(at), first: lo, last: hi})
 			}
 		}
@@ -420,7 +468,8 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	if opts.ByTime != 0 && opts.Bound != nil {
 		// The bound ruled out the units that were neither opened nor left
 		// out for their tokens.
-		late = int64(len(units)) - r.read.Load() - r.skipped.Load()
+		stats.Limited = int64(len(units)) - stats.Blocks - r.skipped.Load() - late
+		late += stats.Limited
 	}
 	stats.SkippedByTime += late
 	if err := context.Cause(ctx); err != nil {
@@ -462,7 +511,16 @@ func (r *scanRun) admit(u *scanUnit) bool {
 	// A block that the range cuts may hold no row inside it, which its
 	// rows by bucket of time tell; reading them takes microseconds a
 	// block, so the scan's goroutines do it.
-	if (u.first < r.minT || u.last > r.maxT) && p.NoneWithin(int(u.block), r.minT, r.maxT) {
+	lo := r.minT
+	if r.opts.ByTime < 0 && r.opts.Bound != nil && u.last > r.maxT {
+		lo = max(lo, r.opts.Bound.Load())
+	}
+	if (u.first < lo || u.last > r.maxT) && p.NoneWithin(int(u.block), lo, r.maxT) {
+		if lo > r.minT {
+			// An earlier match can still exist in this block. Count this
+			// skip against the page bound and leave the predicate cache intact.
+			return false
+		}
 		r.late.Add(1)
 		if empty := r.empties[u.part]; empty != nil {
 			empty.Add(int(u.block))
@@ -591,11 +649,22 @@ func (r *scanRun) grow(wave, done int) int {
 	}
 	have, want := r.opts.Kept()
 	if have > 0 && want > have && done > 0 {
-		need := int64(want-have)*int64(done)/int64(have)*3/2 + 1
-		wave = max(wave, int(min(need, int64(r.workers))))
+		wave = max(wave, estimateBlocks(want-have, done, have, r.workers))
 	}
 
 	return wave
+}
+
+// estimateBlocks allows half a round of slack at the observed match rate.
+// A page can ask for nearly MaxInt rows. Cap the estimate before converting
+// it to a count of blocks.
+func estimateBlocks(missing, scanned, matched, capBlocks int) int {
+	need := float64(missing) * float64(scanned) / float64(matched)
+	if need >= float64(capBlocks) {
+		return capBlocks
+	}
+	n := int(need)
+	return n + min(n/2+1, capBlocks-n)
 }
 
 // byTime scans the units in the order of time, as far as the bound leaves
@@ -638,7 +707,7 @@ func (r *scanRun) byTime(lists *scanLists) {
 
 			return r.one(worker, b, i, &units[i])
 		})
-	case n <= rampFrom:
+	case n <= rampFrom && r.opts.Kept == nil:
 		q.fill(n)
 		r.each(r.workers, 0, n, func(worker int, b *part.Block, i int) bool { return r.one(worker, b, i, &units[i]) })
 	default:
@@ -700,6 +769,10 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 		}
 	}
 	round, opened, had := r.workers, 0, 0
+	if r.opts.Kept != nil {
+		had, _ = r.opts.Kept()
+	}
+	fresh := had == 0
 	if alone {
 		round = 1
 	}
@@ -712,7 +785,7 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 		for len(waiting) > head && int(waiting[len(waiting)-1]) >= end {
 			waiting = waiting[:len(waiting)-1]
 		}
-		if bound != unmoved && opened == 1 {
+		if fresh && bound != unmoved && opened == 1 {
 			for len(q.out) < end {
 				give(len(q.out) + orderedAhead)
 			}
@@ -791,8 +864,7 @@ func (r *scanRun) paced(q *unitQueue, lists *scanLists, alone bool) {
 		}
 		have, want := r.opts.Kept()
 		if gained := have - had; gained > 0 && have < want {
-			need := max(int64(want-have)*int64(opened)/int64(have), int64(want-have)*int64(take)/int64(gained))
-			round = int(min(need+need/2+1, int64(most)))
+			round = max(estimateBlocks(want-have, opened, have, most), estimateBlocks(want-have, take, gained, most))
 		} else {
 			round = min(2*round, most)
 		}

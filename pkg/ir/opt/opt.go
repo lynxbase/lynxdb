@@ -6,6 +6,8 @@
 package opt
 
 import (
+	"math"
+
 	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
@@ -349,11 +351,51 @@ func sortLimitToTopN(n ir.Node, _ *Options) (ir.Node, bool) {
 	if !ok || l.Count < 0 {
 		return n, false
 	}
-	s, ok := l.Input.(*ir.Sort)
+	top, ok := BoundSort(l.Input, l.Count+l.Offset)
 	if !ok {
 		return n, false
 	}
-	return &ir.TopN{Input: s.Input, Keys: s.Keys, Count: l.Count, Offset: l.Offset}, true
+	if l.Offset > 0 {
+		return l.WithInputs([]ir.Node{top}), true
+	}
+	return top, true
+}
+
+// BoundSort caps the nearest sort beneath operators that preserve both
+// order and row count. Sort keys are evaluated before any projection that
+// hides or replaces them.
+func BoundSort(input ir.Node, count int64) (ir.Node, bool) {
+	switch n := input.(type) {
+	case *ir.Sort:
+		if count == 0 {
+			return &ir.Limit{Input: n.Input}, true
+		}
+		return &ir.TopN{Input: n.Input, Keys: n.Keys, Count: count}, true
+	case *ir.TopN:
+		if count < n.Count {
+			if count == 0 {
+				return &ir.Limit{Input: n.Input}, true
+			}
+			cp := *n
+			cp.Count = count
+			return &cp, true
+		}
+	case *ir.Limit:
+		// A PPL head with an offset keeps the offset in front of the
+		// bounded sort. Include those skipped rows in the sort's input.
+		if (n.Count < 0 || count < n.Count) && count <= math.MaxInt64-n.Offset {
+			if in, ok := BoundSort(n.Input, n.Offset+count); ok {
+				cp := *n
+				cp.Input, cp.Count = in, count
+				return &cp, true
+			}
+		}
+	case *ir.Project, *ir.Compute, *ir.RenameColumns, *ir.FillNull, *ir.Extract:
+		if child, ok := BoundSort(input.Inputs()[0], count); ok {
+			return input.WithInputs([]ir.Node{child}), true
+		}
+	}
+	return input, false
 }
 
 // limitIntoScan tells a scan how many rows the operators above it read

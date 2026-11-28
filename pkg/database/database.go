@@ -234,6 +234,9 @@ func (db *DB) Compact(index string) (columnar.Compaction, bool, error) {
 
 // QueryOptions sets how a query runs.
 type QueryOptions struct {
+	// PageBound limits the retained prefix of an eligible event query.
+	PageBound  int
+	acceptPage func() bool
 	// From and To narrow every scan of the query to [From, To); a zero
 	// time leaves that end as the query sets it.
 	From, To time.Time
@@ -275,7 +278,7 @@ func (db *DB) query(ctx context.Context, c *query.Compiled, opts QueryOptions) (
 		plan = &ir.Plan{Root: narrow(plan.Root, opts.From, opts.To, opts.Now)}
 	}
 
-	return db.core.Query(ctx, plan, columnar.Options{DefaultSource: DefaultSource, Now: opts.Now})
+	return db.core.QueryPage(ctx, plan, columnar.Options{DefaultSource: DefaultSource, Now: opts.Now}, opts.PageBound, opts.acceptPage)
 }
 
 // narrow returns the plan under n with every scan restricted to [from, to),
