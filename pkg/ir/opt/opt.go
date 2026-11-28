@@ -6,6 +6,8 @@
 package opt
 
 import (
+	"math"
+
 	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
@@ -370,13 +372,23 @@ func BoundSort(input ir.Node, count int64) (ir.Node, bool) {
 		}
 		return &ir.TopN{Input: n.Input, Keys: n.Keys, Count: count}, true
 	case *ir.TopN:
-		if n.Offset == 0 && count < n.Count {
+		if count < n.Count {
 			if count == 0 {
 				return &ir.Limit{Input: n.Input}, true
 			}
 			cp := *n
 			cp.Count = count
 			return &cp, true
+		}
+	case *ir.Limit:
+		// A PPL head with an offset keeps the offset in front of the
+		// bounded sort. Include those skipped rows in the sort's input.
+		if (n.Count < 0 || count < n.Count) && count <= math.MaxInt64-n.Offset {
+			if in, ok := BoundSort(n.Input, n.Offset+count); ok {
+				cp := *n
+				cp.Input, cp.Count = in, count
+				return &cp, true
+			}
 		}
 	case *ir.Project, *ir.Compute, *ir.RenameColumns, *ir.FillNull, *ir.Extract:
 		if child, ok := BoundSort(input.Inputs()[0], count); ok {

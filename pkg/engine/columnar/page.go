@@ -53,16 +53,10 @@ func pagePlan(plan *ir.Plan, bound int) (*ir.Plan, int64) {
 	for n := plan.Root; ; n = n.Inputs()[0] {
 		switch x := n.(type) {
 		case *ir.Limit:
-			if x.Offset != 0 {
-				return nil, 0
-			}
 			if x.Count >= 0 {
 				capRows = min(capRows, x.Count)
 			}
 		case *ir.TopN:
-			if x.Offset != 0 {
-				return nil, 0
-			}
 			capRows = min(capRows, x.Count)
 		case *ir.Project, *ir.Filter, *ir.Compute, *ir.RenameColumns, *ir.Sort, *ir.Extract, *ir.FillNull:
 		case *ir.Scan:
